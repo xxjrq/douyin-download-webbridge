@@ -1,0 +1,23 @@
+{
+  "name": "douyin-download-webbridge",
+  "version": "0.1.0",
+  "description": "Download authorized Douyin videos and image posts through a logged-in browser.",
+  "private": false,
+  "license": "MIT",
+  "keywords": [
+    "agent-skill",
+    "douyin",
+    "douyin-download",
+    "video-download",
+    "image-download",
+    "creator-tools",
+    "easy-webbridge",
+    "claude-code",
+    "codex",
+    "opencode",
+    "workbuddy"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

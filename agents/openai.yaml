@@ -1,0 +1,7 @@
+interface:
+  display_name: "抖音下载 WebBridge"
+  short_description: "用已登录浏览器下载抖音视频和图文"
+  icon_small: "./assets/icon-128.png"
+  icon_large: "./assets/icon-512.png"
+  brand_color: "#5B5FEF"
+  default_prompt: "使用 $douyin-download-webbridge 下载这个抖音视频或图文作品，保存到本地并告诉我文件路径。"
