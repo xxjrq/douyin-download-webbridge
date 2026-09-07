@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="assets/icon-512.png" width="112" height="112" alt="抖音视频下载与图文下载图标">
+<img src="assets/icon-512.png" width="112" height="112" alt="免费抖音下载支持视频图片图标">
 
-# 免费抖音视频下载与图文下载
+# 免费抖音下载支持视频图片
 
-## 免费使用，免第三方 API Key
+## 免费 · 免额外登录 · 免第三方 API Key
 
-把抖音分享短链、长链或作品 ID 交给 Agent，在你已经登录的浏览器里下载视频或图文。默认选择可用的高清档，适合自媒体素材整理和个人备份。
+把抖音链接交给 Agent，就能把视频或图文图片保存到本地。不用注册第三方下载站，不用申请接口 Key，公开作品可以直接处理；只有抖音自己弹出登录墙时，才需要在你的浏览器里登录抖音。
 
 [简体中文](README.md) | [English](README.en.md)
 
@@ -18,6 +18,13 @@
 
 </div>
 
+## 四个亮点
+
+- **免费**：项目开源，不按次数收费。
+- **免额外登录**：不用注册第三方下载网站，继续使用自己的浏览器。
+- **免第三方 Key**：不需要 TikHub、redfox 或其他下载接口的 Token。
+- **视频图片都支持**：视频默认选择最高可用清晰度，图文作品按顺序保存多张图片。
+
 ## 它能做什么
 
 - 下载抖音视频：从作品详情页取得可用码率，默认按分辨率选择最高档，同分辨率优先 H.264。
@@ -27,7 +34,7 @@
 - 用作品标题生成文件名，并在保存后输出文件路径和基础媒体信息。
 - 免费使用，不需要 TikHub、redfox 或其他第三方 API Key。
 
-这里的“免 Key”指不需要第三方内容接口的 Token。运行时仍需要本地 Easy WebBridge、Node.js、Python 和一个已登录抖音的 Chromium 浏览器。
+这里的“免额外登录”是指不需要注册第三方下载站。“免 Key”是指不需要第三方内容接口的 Token。运行时仍需要 Easy WebBridge、Node.js、Python 和一个 Chromium 浏览器；公开作品通常可以直接处理，遇到抖音登录墙时需要先登录抖音。
 
 这不是剪辑器，也不是“去水印”服务。它只负责把你有权使用的抖音视频或图文保存到本地，不上传平台、不操作账号。
 
@@ -41,7 +48,7 @@ Claude Code / Codex / OpenCode / WorkBuddy
                     |
           Easy WebBridge 127.0.0.1:17777
                     |
-       浏览器扩展 + 已登录抖音页面
+       浏览器扩展 + 抖音公开作品页
 ```
 
 本仓库是独立业务 Skill，负责“抖音作品下载”；[Easy WebBridge](https://github.com/xxjrq/easy-webbridge) 负责连接真实浏览器。两者通过本机 HTTP Bridge 配合，不引用作者电脑上的绝对路径。Easy WebBridge 安装一次后，可以被多个业务 Skill 共用。
@@ -57,7 +64,7 @@ npm install
 node cli/easy-webbridge.mjs start
 ```
 
-在已经登录抖音的 Chrome、Edge、QQ 浏览器或其他 Chromium 浏览器中加载 Easy WebBridge 的 `extension/` 文件夹，并确认 Bridge 能看到该浏览器。
+在 Chrome、Edge、QQ 浏览器或其他 Chromium 浏览器中加载 Easy WebBridge 的 `extension/` 文件夹，并确认 Bridge 能看到该浏览器。公开作品可直接处理；如果抖音显示登录墙，再在这个浏览器里登录抖音。
 
 ### 2. 安装本 Skill
 
@@ -93,7 +100,7 @@ python3 scripts/douyin_download.py "<链接>" --quality worst
 | 参数 | 作用 |
 | --- | --- |
 | 第一个参数 | 抖音分享短链、长链或作品 ID |
-| `-o, --out` | 输出目录，默认 `~/Downloads/QoderVideos` |
+| `-o, --out` | 输出目录，默认 `~/Downloads/DouyinDownloads` |
 | `--browser` | 浏览器显示名，默认 `自媒体` |
 | `--quality best` | 默认模式，选择最高可用清晰度 |
 | `--quality worst` | 选择最小档，仅适合快速预览 |
@@ -102,7 +109,7 @@ python3 scripts/douyin_download.py "<链接>" --quality worst
 
 - Python 3.9+、Node.js 20+ 和 `curl`。
 - Easy WebBridge Bridge 正在运行，默认地址为 `127.0.0.1:17777`。
-- 至少一个已登录抖音的 Chromium 浏览器在线。
+- 至少一个 Chromium 浏览器在线；抖音出现登录墙时需要在该浏览器登录。
 - macOS 默认使用 `/opt/homebrew/bin/ffprobe` 检查视频；没有 ffprobe 时仍可下载，但不会输出媒体校验信息。
 
 脚本会先检查 CLI、Bridge 和在线浏览器。找不到默认名为“自媒体”的浏览器时，会提示并使用第一个在线环境；无法连接时直接停止，不会偷偷打开新的浏览器。
@@ -111,7 +118,7 @@ python3 scripts/douyin_download.py "<链接>" --quality worst
 
 - 视频保存为 `.mp4`，文件名来自作品标题。
 - 图文保存为 `_01.jpeg`、`_02.jpeg` 等顺序文件，优先原图，其次 JPEG，再次 WebP。
-- 默认输出目录是 `~/Downloads/QoderVideos`，也可以用 `-o` 指定。
+- 默认输出目录是 `~/Downloads/DouyinDownloads`，也可以用 `-o` 指定。
 - 抖音直链有时效，遇到 403 时重新运行一次即可；不要长期保存直链。
 
 ## 常见问题

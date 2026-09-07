@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-抖音视频 / 图文下载器（Easy WebBridge 路径）
+免费抖音下载，支持视频和图文图片（Easy WebBridge 路径）
 
-无需 TikHub / redfox API key，复用本地已登录浏览器抓取直链。
+无需注册第三方下载站，也无需 TikHub / redfox API Key。
 
 用法:
     python3 douyin_download.py "https://v.douyin.com/xxxxx/"
     python3 douyin_download.py 7669474316672716066
-    python3 douyin_download.py "<链接>" -o /Users/myd/Downloads/QoderVideos
+    python3 douyin_download.py "<链接>" -o ~/Downloads/DouyinDownloads
     python3 douyin_download.py "<链接>" --browser 自媒体
     python3 douyin_download.py "<链接>" --quality worst   # 只下最小体积（快速预览）
 """
@@ -23,16 +23,22 @@ import time
 
 # ---------- 常量（改这里即可） ----------
 
-FFMPEG_BIN = "/opt/homebrew/bin/ffprobe"          # homebrew 的 ffmpeg 不在默认 PATH
+FFMPEG_BIN = "/opt/homebrew/bin/ffprobe"          # Homebrew 的 ffprobe 可能不在默认 PATH
 BRIDGE_URL = "http://127.0.0.1:17777"
 BRIDGE_TOKEN_FILE = os.path.expanduser("~/.easy-webbridge/bridge-token")
-DEFAULT_OUT_DIR = "/Users/myd/Downloads/QoderVideos"
+DEFAULT_OUT_DIR = os.path.expanduser("~/Downloads/DouyinDownloads")
 
 # easy-webbridge CLI 候选路径（按优先级探测）
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SKILL_DIR = os.path.dirname(SCRIPT_DIR)
+SKILLS_DIR = os.path.dirname(SKILL_DIR)
 CLI_CANDIDATES = [
-    os.path.expanduser(
-        "~/develop/selfmedia/skills/easy-webbridge/skills/easy-webbridge/scripts/easy-webbridge.mjs"
-    ),
+    os.environ.get("EASY_WEBBRIDGE_CLI", ""),
+    os.path.join(SKILLS_DIR, "easy-webbridge", "cli", "easy-webbridge.mjs"),
+    os.path.join(SKILLS_DIR, "easy-webbridge", "skills", "easy-webbridge", "scripts", "easy-webbridge.mjs"),
+    os.path.expanduser("~/.agents/skills/easy-webbridge/cli/easy-webbridge.mjs"),
+    os.path.expanduser("~/.claude/skills/easy-webbridge/cli/easy-webbridge.mjs"),
+    os.path.expanduser("~/.codex/skills/easy-webbridge/cli/easy-webbridge.mjs"),
     os.path.expanduser(
         "~/.workbuddy/skills/easy-webbridge-browser__skillhub/scripts/easy-webbridge.mjs"
     ),

@@ -1,23 +1,27 @@
 ---
 name: douyin-download-webbridge
-description: 用 Easy WebBridge 从已登录浏览器下载抖音视频与图文，不需要 TikHub 或 redfox API key。用户提供抖音分享短链（v.douyin.com/xxx）、长链或 modal_id 要求下载作品时使用，也用于 douyin-downloader（缺 tikhub_api_token）或 video-downloader（redfox public key 被禁用）不可用时的兜底。视频默认取 1080p 原生最高码率（同分辨率优先 H.264），图文默认优先原图、其次 JPEG 和 WebP，支持多图图文批量下载。
+description: 免费下载抖音视频和图文图片，不用注册第三方下载站，也不需要 TikHub、redfox 等第三方 API Key。用户提供抖音分享短链、长链或作品 ID，要求下载视频、保存图文图片、获取高清素材时使用。通过 Easy WebBridge 复用用户已授权的浏览器；公开作品可直接处理，遇到抖音登录墙时停止并请用户在自己的浏览器登录。视频默认选择最高可用分辨率并优先 H.264，图文支持多张图片按顺序保存。
 ---
 
-# 抖音下载（Easy WebBridge 路径）
+# 免费抖音下载支持视频图片
 
-复用本地已登录浏览器抓取作品直链，绕开第三方 API key 依赖。
+## 先说亮点
+
+- **免费**：开源使用，不按次数收费。
+- **免额外登录**：不用注册第三方下载网站；公开作品可以直接处理，抖音出现登录墙时再登录抖音。
+- **免 Key**：不需要申请 TikHub、redfox 或其他第三方内容接口的 API Key。
+- **视频、图片都支持**：既能保存视频，也能按顺序保存多张图文图片。
+
+通过 Easy WebBridge 复用用户已经打开并授权的浏览器，把抖音作品保存到本地。
 
 ## 1. 一键命令
 
 ```bash
-PY=/usr/bin/python3
-S=~/develop/selfmedia/skills/douyin-download-webbridge/scripts/douyin_download.py
-
-$PY "$S" "https://v.douyin.com/xxxxx/"                 # 下载到 ~/Downloads/QoderVideos
-$PY "$S" 7669474316672716066                          # modal_id 也认
-$PY "$S" "<链接>" -o /path/to/dir                      # 指定输出目录
-$PY "$S" "<链接>" --browser 自媒体                      # 指定浏览器
-$PY "$S" "<链接>" --quality worst                      # 只要最小体积（快速预览）
+python3 scripts/douyin_download.py "https://v.douyin.com/xxxxx/"          # 默认下载目录
+python3 scripts/douyin_download.py 7669474316672716066                    # 作品 ID 也认
+python3 scripts/douyin_download.py "<链接>" -o /path/to/dir               # 指定输出目录
+python3 scripts/douyin_download.py "<链接>" --browser 自媒体               # 指定浏览器
+python3 scripts/douyin_download.py "<链接>" --quality worst               # 最小体积预览
 ```
 
 **默认即最高清**，不用加任何参数：视频取最大分辨率且同分辨率优先 H.264，图文逐张取 `原图 > JPEG > WebP`。
@@ -30,9 +34,11 @@ $PY "$S" "<链接>" --quality worst                      # 只要最小体积（
 执行前必须全部通过，任一失败即停止并报告原因：
 
 1. **easy-webbridge CLI** 存在。按序探测：
-   - `~/develop/selfmedia/skills/easy-webbridge/skills/easy-webbridge/scripts/easy-webbridge.mjs`
+   - 环境变量 `EASY_WEBBRIDGE_CLI` 指定的路径。
+   - 本 Skill 同级的 `easy-webbridge/cli/easy-webbridge.mjs`。
+   - `~/.agents/skills/easy-webbridge/cli/easy-webbridge.mjs` 等常见 Agent Skill 目录。
    - `~/.workbuddy/skills/easy-webbridge-browser__skillhub/scripts/easy-webbridge.mjs`
-   - 两份 md5 相同、同源，任一可用即可。
+   - 任一可用即可。
 2. **bridge 服务在线**：`127.0.0.1:17777` 可访问，token 读自 `~/.easy-webbridge/bridge-token`。
 3. **至少一个浏览器 online**：默认挑 displayName 为 `自媒体` 的实例，找不到时退选第一个在线浏览器并告警。
 
@@ -126,7 +132,7 @@ $PY "$S" "<链接>" --quality worst                      # 只要最小体积（
 
 ## 6. 输出合同
 
-- 输出目录默认 `/Users/myd/Downloads/QoderVideos`，不存在时自动创建。
+- 输出目录默认 `~/Downloads/DouyinDownloads`，不存在时自动创建。
 - 文件名取作品 desc，清理规则：去 `#话题`、去 emoji 与非法字符、限长 40 字；清理后为空则用 modal_id。
 - 视频扩展名 `.mp4`；图文按 URL 后缀取 `.jpeg` / `.png` / `.webp`。
 - 结束时打印实际保存的文件绝对路径。
@@ -153,3 +159,16 @@ $PY "$S" "<链接>" --quality worst                      # 只要最小体积（
 - 只下载，不做剪辑、转码、加水印、去水印。
 - 不上传平台、不操作账号、不采集发布后数据。
 - 遇到风控验证页（滑块/登录墙）时停止，不绕过。
+
+## 9. 与工作台候选池协作
+
+当素材来自“内容来源采集器”或工作台“热点候选池”时，遵循下面的边界：
+
+1. 候选池只保存人工待筛选的抖音视频/图文，不是正式内容，也不会自动创建 `projects/` 目录。
+2. 工作台的“加入下载队列”接口（`POST /api/source-candidates/batch-download`）目前只登记 `pending` 下载任务；它不会在接口请求中直接下载文件。下载 Skill 或后续 Worker 必须逐项读取候选的 `canonical_url`，调用本 Skill 的一键命令，并在完成后回写真实输出路径和结果。
+3. 下载前必须由用户确认候选项。批量任务按候选逐项执行，不能把失败项标成成功；失败原因和路径要分别保留。
+4. 视频候选使用 `content_type=video`，图文候选使用 `content_type=post`。图文按第 5 节落地多张图片，不能把图文当成空视频文件。
+5. 建议输出到对应内容单元的 `assets/raw/` 或用户指定的素材目录；不得把素材、缓存或下载任务元数据写入正式 `发布成品/`。
+6. 候选池支持抖音以外的平台字段，但本 Skill 只处理抖音。小红书、B 站等平台必须由各自下载 Skill 负责，不能套用抖音直链规则。
+
+候选池状态与下载状态分离：`collected/shortlisted/promoted/rejected` 表示人工筛选进度；`none/queued/processing/completed/failed` 表示下载进度。只有实际文件通过 `ffprobe` 或图片完整性检查后，才能回写 `completed`。

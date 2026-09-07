@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="assets/icon-512.png" width="112" height="112" alt="Douyin video and image download icon">
+<img src="assets/icon-512.png" width="112" height="112" alt="Free Douyin video and image downloader icon">
 
-# Free Douyin Video and Image Downloader
+# Free Douyin Downloads for Videos and Images
 
-## Free to use, no third-party API key
+## Free · no extra downloader account · no third-party API key
 
-Give an Agent a Douyin share link, long URL, or work ID. The Skill uses the browser session you already have open, selects an available high-quality video stream, or saves a multi-image post one image at a time.
+Give an Agent a Douyin link and it saves the video or image post locally. You do not need to register with a third-party downloader or request an API key. Public works can usually be handled directly; sign in to Douyin only if Douyin itself shows a login wall.
 
 [简体中文](README.md) | [English](README.en.md)
 
@@ -18,6 +18,13 @@ Give an Agent a Douyin share link, long URL, or work ID. The Skill uses the brow
 
 </div>
 
+## Highlights
+
+- **Free and open source:** no per-download charge.
+- **No extra login:** no third-party downloader account; it keeps using your own browser.
+- **No third-party key:** no TikHub, redfox, or similar content API token.
+- **Videos and images:** selects the highest available video quality and saves multi-image posts in order.
+
 ## What it does
 
 - Downloads Douyin videos by reading available bitrate variants from the work detail page.
@@ -28,7 +35,7 @@ Give an Agent a Douyin share link, long URL, or work ID. The Skill uses the brow
 - Creates readable filenames from the work title and prints saved paths plus basic media information.
 - Free to use and does not require TikHub, redfox, or another third-party API key.
 
-“No key” means no token is needed for a third-party content API. The local runtime still needs Easy WebBridge, Node.js, Python, and a Chromium browser already logged in to Douyin.
+“No extra login” means no third-party downloader account. “No key” means no token for a third-party content API. The local runtime still needs Easy WebBridge, Node.js, Python, and a Chromium browser. If Douyin shows a login wall, sign in to Douyin in that browser.
 
 This is a downloader and organizer, not an editor or watermark-removal service. It saves content you are authorized to use and does not upload, publish, or operate your account.
 
@@ -42,7 +49,7 @@ Claude Code / Codex / OpenCode / WorkBuddy
                     |
           Easy WebBridge 127.0.0.1:17777
                     |
-       browser extension + logged-in Douyin
+       browser extension + public Douyin work
 ```
 
 This repository owns the Douyin download workflow. [Easy WebBridge](https://github.com/xxjrq/easy-webbridge) connects the real browser. They are independent repositories linked through the local HTTP Bridge, with no author-specific filesystem path. Install Easy WebBridge once and reuse it from other business Skills.
@@ -58,7 +65,7 @@ npm install
 node cli/easy-webbridge.mjs start
 ```
 
-Load the Easy WebBridge `extension/` directory in a Chromium browser that is already logged in to Douyin, then confirm that the Bridge sees the browser.
+Load the Easy WebBridge `extension/` directory in a Chromium browser, then confirm that the Bridge sees it. Public works can usually be handled directly; sign in to Douyin only when Douyin shows a login wall.
 
 ### 2. Install this Skill
 
@@ -94,7 +101,7 @@ Options:
 | Option | Purpose |
 | --- | --- |
 | First argument | Douyin share link, long URL, or work ID |
-| `-o, --out` | Output directory; defaults to `~/Downloads/QoderVideos` |
+| `-o, --out` | Output directory; defaults to `~/Downloads/DouyinDownloads` |
 | `--browser` | Browser display name; defaults to `自媒体` |
 | `--quality best` | Default mode; choose the highest available quality |
 | `--quality worst` | Choose the smallest variant for a quick preview |
@@ -103,7 +110,7 @@ Options:
 
 - Python 3.9+, Node.js 20+, and `curl`.
 - Easy WebBridge running at `127.0.0.1:17777` by default.
-- At least one Chromium browser online and logged in to Douyin.
+- At least one Chromium browser online; sign in to Douyin if the page shows a login wall.
 - On macOS, `/opt/homebrew/bin/ffprobe` is used for video checks. Downloads still work without ffprobe, but media inspection is skipped.
 
 The script checks the CLI, Bridge, and online browsers before opening the work. If the browser named `自媒体` is unavailable, it reports the fallback browser it selected. It never silently starts a new browser.
@@ -112,7 +119,7 @@ The script checks the CLI, Bridge, and online browsers before opening the work. 
 
 - Videos are saved as `.mp4` files named from the work title.
 - Image posts are saved as `_01.jpeg`, `_02.jpeg`, and so on, preferring original, JPEG, then WebP variants.
-- The default output directory is `~/Downloads/QoderVideos`; use `-o` to change it.
+- The default output directory is `~/Downloads/DouyinDownloads`; use `-o` to change it.
 - Douyin media URLs expire. If a download returns 403, run the command again to obtain a fresh URL.
 
 ## Boundaries
