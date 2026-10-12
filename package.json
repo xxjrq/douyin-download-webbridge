@@ -1,6 +1,6 @@
 {
   "name": "douyin-download-webbridge",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Free Douyin video and image downloads without a third-party account or API key.",
   "private": false,
   "license": "MIT",
@@ -18,7 +18,7 @@
     "workbuddy"
   ],
   "scripts": {
-    "check": "python3 -c \"import ast,pathlib; ast.parse(pathlib.Path('scripts/douyin_download.py').read_text())\" && python3 scripts/douyin_download.py --help >/dev/null"
+    "check": "python3 -c \"import ast,pathlib; ast.parse(pathlib.Path('scripts/douyin_download.py').read_text())\" && python3 -m unittest discover -s tests -p 'test_*.py' && python3 scripts/douyin_download.py --help >/dev/null"
   },
   "engines": {
     "node": ">=20"

@@ -11,6 +11,7 @@
     python3 douyin_download.py "<链接>" -o ~/Downloads/DouyinDownloads
     python3 douyin_download.py "<链接>" --browser 自媒体
     python3 douyin_download.py "<链接>" --quality worst   # 只下最小体积（快速预览）
+    python3 douyin_download.py "<链接>" --audio-only     # 只提取作品音轨并标准化为 MP3
 """
 
 import argparse
@@ -20,29 +21,16 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 
 # ---------- 常量（改这里即可） ----------
 
-FFMPEG_BIN = "/opt/homebrew/bin/ffprobe"          # Homebrew 的 ffprobe 可能不在默认 PATH
+FFMPEG_BIN = "/opt/homebrew/bin/ffmpeg"
+FFPROBE_BIN = "/opt/homebrew/bin/ffprobe"
 BRIDGE_URL = "http://127.0.0.1:17777"
-BRIDGE_TOKEN_FILE = os.path.expanduser("~/.easy-webbridge/bridge-token")
 DEFAULT_OUT_DIR = os.path.expanduser("~/Downloads/DouyinDownloads")
-
-# easy-webbridge CLI 候选路径（按优先级探测）
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SKILL_DIR = os.path.dirname(SCRIPT_DIR)
-SKILLS_DIR = os.path.dirname(SKILL_DIR)
-CLI_CANDIDATES = [
-    os.environ.get("EASY_WEBBRIDGE_CLI", ""),
-    os.path.join(SKILLS_DIR, "easy-webbridge", "cli", "easy-webbridge.mjs"),
-    os.path.join(SKILLS_DIR, "easy-webbridge", "skills", "easy-webbridge", "scripts", "easy-webbridge.mjs"),
-    os.path.expanduser("~/.agents/skills/easy-webbridge/cli/easy-webbridge.mjs"),
-    os.path.expanduser("~/.claude/skills/easy-webbridge/cli/easy-webbridge.mjs"),
-    os.path.expanduser("~/.codex/skills/easy-webbridge/cli/easy-webbridge.mjs"),
-    os.path.expanduser(
-        "~/.workbuddy/skills/easy-webbridge-browser__skillhub/scripts/easy-webbridge.mjs"
-    ),
-]
+BRIDGE_TOKEN_FILE = os.path.join(os.path.expanduser("~"), ".easy-webbridge", "bridge-token")
 
 UA_MOBILE = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 "
@@ -53,6 +41,7 @@ UA_DESKTOP = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 REFERER = "https://www.douyin.com/"
+IMAGE_AWEME_TYPES = {68}
 
 OK, FAIL, INFO, WARN = "[OK]", "[FAIL]", "[..]", "[!!]"
 
@@ -72,44 +61,30 @@ def run(cmd, desc=""):
         return -1, "", str(e)
 
 
-def find_cli():
-    for path in CLI_CANDIDATES:
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-def find_node():
-    for node in [
-        os.path.expanduser("~/.workbuddy/binaries/node/versions/22.22.2-2/bin/node"),
-        "/opt/homebrew/bin/node",
-        "/usr/local/bin/node",
-    ]:
-        if os.path.isfile(node):
-            return node
-    return "node"  # 交给 PATH
+def bridge_request(path, body=None, timeout=10):
+    """调用 EasyBR 内置的本机 WebBridge HTTP API。"""
+    if not os.path.isfile(BRIDGE_TOKEN_FILE):
+        raise FileNotFoundError(f"找不到 Bridge token: {BRIDGE_TOKEN_FILE}")
+    with open(BRIDGE_TOKEN_FILE, encoding="utf-8") as f:
+        token = f.read().strip()
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(
+        f"{BRIDGE_URL}{path}", data=data,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST" if data is not None else "GET",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 # ---------- 前置检查 ----------
 
 def check_bridge():
     """确认 bridge 服务在线，返回在线浏览器列表"""
-    if not os.path.isfile(BRIDGE_TOKEN_FILE):
-        log(FAIL, f"找不到 bridge token: {BRIDGE_TOKEN_FILE}")
-        return None
-    with open(BRIDGE_TOKEN_FILE) as f:
-        token = f.read().strip()
-    rc, out, err = run(
-        ["curl", "-s", "--max-time", "5", "-H", f"Authorization: Bearer {token}",
-         f"{BRIDGE_URL}/v1/browsers"]
-    )
-    if rc != 0 or not out:
-        log(FAIL, "Easy WebBridge 服务未运行（127.0.0.1:17777 无响应）")
-        return None
     try:
-        data = json.loads(out)
-    except json.JSONDecodeError:
-        log(FAIL, f"bridge 返回非 JSON: {out[:200]}")
+        data = bridge_request("/v1/browsers", timeout=5)
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as e:
+        log(FAIL, f"EasyBR 内置 Easy WebBridge 未运行或无法访问：{e}")
         return None
     browsers = [b for b in data.get("browsers", []) if b.get("online")]
     return browsers
@@ -155,34 +130,21 @@ def parse_input(user_input):
 
 # ---------- 浏览器操作 ----------
 
-def wb(cli, node, browser_id, action, payload=None):
-    """调用 easy-webbridge CLI"""
-    cmd = [node, cli]
-    if action == "navigate":
-        url = payload.pop("_url")
-        cmd += ["navigate", browser_id, url]
-        for k in ("session", "group-title"):
-            if k in payload:
-                cmd += [f"--{k}", payload[k]]
-        if payload.get("new_tab"):
-            cmd.append("--new-tab")
-    else:
-        cmd += ["command", browser_id, action, json.dumps(payload, ensure_ascii=False)]
-    rc, out, err = run(cmd)
-    if rc != 0:
-        log(FAIL, f"CLI {action} 执行失败: {err[:300]}")
-        return None
+def wb(browser_id, action, payload=None):
+    """调用 EasyBR 内置 Easy WebBridge API。"""
     try:
-        return json.loads(out)
-    except json.JSONDecodeError:
-        log(FAIL, f"CLI {action} 返回非 JSON: {out[:300]}")
+        return bridge_request(f"/v1/browsers/{browser_id}/commands", {
+            "action": action, "args": payload or {},
+        })
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as e:
+        log(FAIL, f"Easy WebBridge {action} 调用失败：{e}")
         return None
 
 
-def navigate_to(cli, node, browser_id, aweme_id, session):
+def navigate_to(browser_id, aweme_id, session):
     url = f"https://www.douyin.com/video/{aweme_id}"
-    res = wb(cli, node, browser_id, "navigate", {
-        "_url": url, "new_tab": True, "session": session, "group-title": "抖音下载",
+    res = wb(browser_id, "navigate", {
+        "url": url, "newTab": True, "session": session, "groupTitle": "抖音下载",
     })
     if not res or not res.get("ok"):
         return None
@@ -191,10 +153,10 @@ def navigate_to(cli, node, browser_id, aweme_id, session):
     return r.get("tabId")
 
 
-def evaluate(cli, node, browser_id, tab_id, code, wait=0):
+def evaluate(browser_id, tab_id, code, wait=0):
     if wait:
         time.sleep(wait)
-    res = wb(cli, node, browser_id, "evaluate", {"tabId": tab_id, "code": code})
+    res = wb(browser_id, "evaluate", {"tabId": tab_id, "code": code})
     if not res or not res.get("ok"):
         return None
     return res.get("result")
@@ -202,7 +164,7 @@ def evaluate(cli, node, browser_id, tab_id, code, wait=0):
 
 # ---------- 取直链 ----------
 
-def fetch_video_detail(cli, node, browser_id, tab_id, aweme_id):
+def fetch_video_detail(browser_id, tab_id, aweme_id):
     """在页面内 fetch detail 接口，拿全部码率档位 + 标题。
     注意：不要直接读 video.src —— 那只给 540p。"""
     js = (
@@ -216,7 +178,7 @@ def fetch_video_detail(cli, node, browser_id, tab_id, aweme_id):
         'return JSON.stringify({desc:d.desc||"",duration:v.duration||0,brs:brs})'
         '}catch(e){return JSON.stringify({err:String(e)})}})()'
     )
-    raw = evaluate(cli, node, browser_id, tab_id, js, wait=3)
+    raw = evaluate(browser_id, tab_id, js, wait=3)
     if not raw:
         return None
     try:
@@ -226,25 +188,70 @@ def fetch_video_detail(cli, node, browser_id, tab_id, aweme_id):
         return None
 
 
-def detect_kind(cli, node, browser_id, tab_id):
-    """打开页面后按实际内容判定类型。
-
-    不能只信短链路径：图文作品的分享链接也可能走 /share/video/，
-    只有打开后看页面实际跳转与有无 video 元素才可靠。
-    """
-    js = (
-        '(()=>{const v=document.querySelector("video");'
-        'return JSON.stringify({href:location.href,'
-        'hasVideo:!!v,vidCount:document.querySelectorAll("video").length})})()'
-    )
-    raw = evaluate(cli, node, browser_id, tab_id, js, wait=2)
-    try:
-        d = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return "video"
-    if "/note/" in (d.get("href") or ""):
+def classify_media_probe(probe):
+    """根据详情接口的媒体特征判型；无法确认时返回 None。"""
+    if not isinstance(probe, dict) or not probe.get("detailReady"):
+        return None
+    if probe.get("hasImages") or probe.get("awemeType") in IMAGE_AWEME_TYPES:
         return "note"
-    if not d.get("hasVideo"):
+    if probe.get("hasVideo") or probe.get("awemeType") == 0:
+        return "video"
+    return None
+
+
+def fetch_kind_probe(browser_id, tab_id, aweme_id, wait=0):
+    """从 detail 接口读取稳定的媒体类型特征，不依赖页面组件挂载时机。"""
+    js = (
+        '(async()=>{try{'
+        f'const url="https://www.douyin.com/aweme/v1/web/aweme/detail/?device_platform=webapp&aid=6383&channel=channel_pc_web&aweme_id={aweme_id}";'
+        'const j=await(await fetch(url,{credentials:"include"})).json();'
+        'const d=j.aweme_detail;if(!d)return JSON.stringify({detailReady:false});'
+        'const ip=d.image_post_info||{};'
+        'const imageLists=[d.images,d.image_list,d.image_infos,d.original_images,'
+        'ip.images,ip.image_list,ip.image_infos];'
+        'const hasImages=imageLists.some(x=>Array.isArray(x)&&x.length>0);'
+        'const v=d.video||{};'
+        'const addrs=[v.play_addr,v.play_addr_h264,v.play_addr_265,v.download_addr];'
+        'const hasVideo=(Array.isArray(v.bit_rate)&&v.bit_rate.some(b=>'
+        'Array.isArray((b.play_addr||{}).url_list)&&(b.play_addr||{}).url_list.length>0))||'
+        'addrs.some(a=>a&&Array.isArray(a.url_list)&&a.url_list.length>0);'
+        'return JSON.stringify({detailReady:true,awemeType:d.aweme_type,'
+        'hasImages:hasImages,hasVideo:hasVideo})'
+        '}catch(e){return JSON.stringify({detailReady:false,err:String(e)})}})()'
+    )
+    raw = evaluate(browser_id, tab_id, js, wait=wait)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def detect_kind(browser_id, tab_id, aweme_id):
+    """打开页面后按详情接口判型，页面 URL 和 DOM 只作兜底。
+
+    页面首屏可能先没有 ``<video>``，把“元素尚未挂载”当成图文会让视频
+    错走图片分支。详情接口暂时不可用时默认先尝试视频；主流程随后仍会
+    自动回退到图文，因此不会牺牲真实图文作品。
+    """
+    for wait in (0, 1, 2):
+        kind = classify_media_probe(
+            fetch_kind_probe(browser_id, tab_id, aweme_id, wait=wait)
+        )
+        if kind:
+            return kind
+
+    js = (
+        '(()=>JSON.stringify({href:location.href,'
+        'hasVideo:!!document.querySelector("video")}))()'
+    )
+    raw = evaluate(browser_id, tab_id, js)
+    try:
+        page = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        page = {}
+    if "/note/" in (page.get("href") or ""):
         return "note"
     return "video"
 
@@ -259,7 +266,7 @@ def _img_key(url):
     return m.group(1) if m else None
 
 
-def fetch_note_detail(cli, node, browser_id, tab_id, aweme_id):
+def fetch_note_detail(browser_id, tab_id, aweme_id):
     """优先走 detail 接口取正文图，避免 DOM 抓取混入推荐位/评论的小图。
 
     返回每张图的**全部** url_list 档位（通常有 webp / jpeg 两种），
@@ -277,7 +284,7 @@ def fetch_note_detail(cli, node, browser_id, tab_id, aweme_id):
         'return JSON.stringify({desc:d.desc||"",imgs:ims})'
         '}catch(e){return JSON.stringify({err:String(e)})}})()'
     )
-    raw = evaluate(cli, node, browser_id, tab_id, js, wait=2)
+    raw = evaluate(browser_id, tab_id, js, wait=2)
     if not raw:
         return None
     try:
@@ -286,7 +293,52 @@ def fetch_note_detail(cli, node, browser_id, tab_id, aweme_id):
         return None
 
 
-def fetch_note_images(cli, node, browser_id, tab_id):
+def pick_audio_source(detail):
+    """选择作品可播放音轨。
+
+    图文作品的背景音乐常放在 ``video.play_addr``，即使 ``music.play_url``
+    因地区版权限制为空；普通视频的同一字段则是带完整混音的低码率视频。
+    两者都可以交给 ffmpeg 提取音轨。
+    """
+    if not isinstance(detail, dict):
+        return None
+    for key in ("video_play_urls", "music_play_urls", "music_original_urls"):
+        urls = detail.get(key)
+        if isinstance(urls, list):
+            url = next((item for item in urls if isinstance(item, str) and item.startswith("http")), None)
+            if url:
+                return url
+    return None
+
+
+def fetch_audio_detail(browser_id, tab_id, aweme_id):
+    """从作品详情提取可供 ffmpeg 读取的音轨源及描述信息。"""
+    js = (
+        '(async()=>{try{'
+        f'const url="https://www.douyin.com/aweme/v1/web/aweme/detail/?device_platform=webapp&aid=6383&channel=channel_pc_web&aweme_id={aweme_id}";'
+        'const j=await(await fetch(url,{credentials:"include"})).json();'
+        'const d=j.aweme_detail;if(!d)return JSON.stringify({err:"no aweme_detail"});'
+        'const v=d.video||{},m=d.music||{},p=m.play_url||{};'
+        'let extra={};try{extra=typeof m.extra==="string"?JSON.parse(m.extra):(m.extra||{})}catch(_){}'
+        'const images=Array.isArray(d.images)?d.images:[];'
+        'return JSON.stringify({desc:d.desc||"",aweme_type:d.aweme_type,'
+        'kind:images.length?"note":"video",music_title:m.title||"",music_author:m.author||"",'
+        'offline_desc:m.offline_desc||"",'
+        'video_play_urls:((v.play_addr||{}).url_list||[]),'
+        'music_play_urls:(p.url_list||[]),'
+        'music_original_urls:extra.original_song_url?[extra.original_song_url]:[]})'
+        '}catch(e){return JSON.stringify({err:String(e)})}})()'
+    )
+    raw = evaluate(browser_id, tab_id, js, wait=2)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def fetch_note_images(browser_id, tab_id):
     """从 DOM 提取图片 URL，主要用于捞 ~noop 原图。
 
     只有当前轮播显示的那张图才会渲染 ~noop 原图 URL，其余是压缩档 —— 所以
@@ -299,7 +351,7 @@ def fetch_note_images(cli, node, browser_id, tab_id):
         '.filter(s=>!/avatar|100x100|cropcenter|resize/.test(s));'
         'return JSON.stringify([...new Set(out)])})()'
     )
-    raw = evaluate(cli, node, browser_id, tab_id, js, wait=2)
+    raw = evaluate(browser_id, tab_id, js, wait=2)
     if not raw:
         return []
     try:
@@ -308,8 +360,8 @@ def fetch_note_images(cli, node, browser_id, tab_id):
         return []
 
 
-def get_title(cli, node, browser_id, tab_id):
-    raw = evaluate(cli, node, browser_id, tab_id, "document.title")
+def get_title(browser_id, tab_id):
+    raw = evaluate(browser_id, tab_id, "document.title")
     if not raw:
         return ""
     return re.sub(r"\s*-\s*抖音\s*$", "", str(raw)).strip()
@@ -362,10 +414,10 @@ def download(url, out_path, referer=REFERER):
 
 
 def probe(path):
-    if not os.path.isfile(FFMPEG_BIN):
+    if not os.path.isfile(FFPROBE_BIN):
         return None
     rc, out, _ = run(
-        [FFMPEG_BIN, "-v", "error", "-print_format", "json",
+        [FFPROBE_BIN, "-v", "error", "-print_format", "json",
          "-show_format", "-show_streams", path]
     )
     if rc != 0 or not out:
@@ -383,11 +435,73 @@ def probe(path):
         return None
 
 
+def probe_audio(path):
+    if not os.path.isfile(FFPROBE_BIN):
+        return None
+    rc, out, _ = run(
+        [FFPROBE_BIN, "-v", "error", "-print_format", "json",
+         "-show_format", "-show_streams", path]
+    )
+    if rc != 0 or not out:
+        return None
+    try:
+        data = json.loads(out)
+        stream = next((s for s in data.get("streams", []) if s.get("codec_type") == "audio"), {})
+        duration = float((data.get("format") or {}).get("duration") or 0)
+        return {
+            "codec": stream.get("codec_name"),
+            "sample_rate": int(stream.get("sample_rate") or 0),
+            "channels": int(stream.get("channels") or 0),
+            "dur": round(duration, 3),
+        }
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
 # ---------- 两个下载分支 ----------
 
-def try_video(cli, node, browser_id, tab_id, aweme_id, args):
+def try_audio_only(browser_id, tab_id, aweme_id, args):
+    """提取视频混音或图文配乐，统一输出 48kHz 双声道 MP3。"""
+    detail = fetch_audio_detail(browser_id, tab_id, aweme_id)
+    source_url = pick_audio_source(detail)
+    if not detail or detail.get("err") or not source_url:
+        reason = (detail or {}).get("offline_desc") or (detail or {}).get("err") or "作品详情没有可播放音轨"
+        log(FAIL, f"没有提取到作品配乐: {reason}")
+        return [], detail or {}
+    if not os.path.isfile(FFMPEG_BIN):
+        log(FAIL, f"找不到 ffmpeg: {FFMPEG_BIN}")
+        return [], detail
+
+    stamp = int(time.time() * 1000)
+    source_path = os.path.join(args.out, f".douyin-{aweme_id}-{stamp}.source")
+    out_path = os.path.join(args.out, f"douyin-{aweme_id}-{stamp}-original.mp3")
+    try:
+        if not download(source_url, source_path):
+            return [], detail
+        rc, _, err = run([
+            FFMPEG_BIN, "-y", "-v", "error", "-i", source_path, "-vn",
+            "-ac", "2", "-ar", "48000", "-c:a", "libmp3lame", "-q:a", "2", out_path,
+        ], "提取作品音轨")
+        if rc != 0:
+            log(FAIL, f"音频转码失败: {err.strip()[:400]}")
+            return [], detail
+        info = probe_audio(out_path)
+        if not info or info["dur"] <= 0 or info["sample_rate"] != 48000 or info["channels"] != 2:
+            log(FAIL, "音频校验失败，未得到 48kHz 双声道有效音轨")
+            if os.path.isfile(out_path):
+                os.unlink(out_path)
+            return [], detail
+        log(OK, f"音频校验 {info['codec']} | {info['sample_rate']}Hz | "
+                f"{info['channels']}ch | {info['dur']}s")
+        return [out_path], detail
+    finally:
+        if os.path.isfile(source_path):
+            os.unlink(source_path)
+
+
+def try_video(browser_id, tab_id, aweme_id, args):
     """视频分支：从 detail 接口取全码率档位，选最高清（同分辨率优先 H.264）"""
-    detail = fetch_video_detail(cli, node, browser_id, tab_id, aweme_id)
+    detail = fetch_video_detail(browser_id, tab_id, aweme_id)
     if not detail or detail.get("err") or not detail.get("brs"):
         log(WARN, f"视频取流失败: {(detail or {}).get('err', '无码率档位')}")
         return []
@@ -398,7 +512,7 @@ def try_video(cli, node, browser_id, tab_id, aweme_id, args):
     log(OK, f"选中 {pick['w']}x{pick['h']} ({pick.get('gear', '')}) "
             f"编码={pick.get('codec', '?')}")
 
-    title = detail.get("desc") or get_title(cli, node, browser_id, tab_id)
+    title = detail.get("desc") or get_title(browser_id, tab_id)
     base = safe_filename(title, aweme_id)
     out_path = os.path.join(args.out, f"{base}.mp4")
     if not download(pick["url"], out_path):
@@ -426,12 +540,12 @@ def pick_image(urls, noop_map):
     return urls[0], "标准"
 
 
-def try_note(cli, node, browser_id, tab_id, aweme_id, args):
+def try_note(browser_id, tab_id, aweme_id, args):
     """图文分支：detail 接口定图片清单，逐张挑最清晰档位落地"""
     imgs, title = [], ""
 
-    detail = fetch_note_detail(cli, node, browser_id, tab_id, aweme_id)
-    dom_imgs = fetch_note_images(cli, node, browser_id, tab_id)
+    detail = fetch_note_detail(browser_id, tab_id, aweme_id)
+    dom_imgs = fetch_note_images(browser_id, tab_id)
 
     # DOM 里带签名的 ~noop 原图（按图片 ID 索引）
     noop_map = {}
@@ -456,7 +570,7 @@ def try_note(cli, node, browser_id, tab_id, aweme_id, args):
         return []
 
     if not title:
-        title = get_title(cli, node, browser_id, tab_id)
+        title = get_title(browser_id, tab_id)
     base = safe_filename(title, aweme_id)
 
     tiers = {}
@@ -487,17 +601,10 @@ def main():
     ap.add_argument("-o", "--out", default=DEFAULT_OUT_DIR, help="输出目录")
     ap.add_argument("--browser", default="自媒体", help="浏览器显示名（默认：自媒体）")
     ap.add_argument("--quality", default="best", choices=["best", "worst"], help="清晰度")
+    ap.add_argument("--audio-only", action="store_true", help="只提取作品音轨，输出 48kHz 双声道 MP3")
     args = ap.parse_args()
 
-    # 1. 依赖探测
-    cli = find_cli()
-    if not cli:
-        log(FAIL, "找不到 easy-webbridge CLI，检查路径：\n  " + "\n  ".join(CLI_CANDIDATES))
-        return 1
-    node = find_node()
-    log(OK, f"CLI: {cli}")
-
-    # 2. bridge + 浏览器
+    # 1. EasyBR 内置 Bridge + 浏览器
     browsers = check_bridge()
     if not browsers:
         return 1
@@ -508,36 +615,40 @@ def main():
     browser_id = target["browserId"]
     log(OK, f"浏览器: {target.get('displayName')} ({browser_id})")
 
-    # 3. 解析输入（类型只是初判，以打开后的实际页面为准）
+    # 2. 解析输入（类型只是初判，以打开后的实际页面为准）
     aweme_id, kind = parse_input(args.input)
     if not aweme_id:
         return 1
 
-    # 4. 打开页面
+    # 3. 打开页面
     session = f"douyin-dl-{time.strftime('%m%d%H%M%S')}"
-    tab_id = navigate_to(cli, node, browser_id, aweme_id, session)
+    tab_id = navigate_to(browser_id, aweme_id, session)
     if not tab_id:
         return 1
 
-    kind = detect_kind(cli, node, browser_id, tab_id)
+    kind = detect_kind(browser_id, tab_id, aweme_id)
     log(OK, f"作品 ID: {aweme_id} | 实际类型: {'图文' if kind == 'note' else '视频'}")
 
     os.makedirs(args.out, exist_ok=True)
     saved = []
+    result_detail = {}
 
     try:
-        # 5. 视频分支
-        if kind != "note":
-            saved += try_video(cli, node, browser_id, tab_id, aweme_id, args)
-
-        # 6. 图文分支：初判为图文，或视频取流失败时兜底
-        if not saved:
+        if args.audio_only:
+            saved, result_detail = try_audio_only(browser_id, tab_id, aweme_id, args)
+        else:
+            # 5. 视频分支
             if kind != "note":
-                log(WARN, "视频取流失败，改为按图文提取")
-            saved += try_note(cli, node, browser_id, tab_id, aweme_id, args)
+                saved += try_video(browser_id, tab_id, aweme_id, args)
+
+            # 6. 图文分支：初判为图文，或视频取流失败时兜底
+            if not saved:
+                if kind != "note":
+                    log(WARN, "视频取流失败，改为按图文提取")
+                saved += try_note(browser_id, tab_id, aweme_id, args)
     finally:
         # 6. 清理标签组
-        wb(cli, node, browser_id, "close_session", {"session": session})
+        wb(browser_id, "close_session", {"session": session})
         log(INFO, "已关闭浏览器标签组")
 
     if not saved:
@@ -546,6 +657,14 @@ def main():
     log(OK, f"完成，共 {len(saved)} 个文件 → {args.out}")
     for p in saved:
         print(f"    {p}")
+    print("RESULT_JSON=" + json.dumps({
+        "aweme_id": aweme_id,
+        "kind": result_detail.get("kind", kind),
+        "title": result_detail.get("desc", ""),
+        "music_title": result_detail.get("music_title", ""),
+        "music_author": result_detail.get("music_author", ""),
+        "saved": [os.path.abspath(p) for p in saved],
+    }, ensure_ascii=False))
     return 0
 
 

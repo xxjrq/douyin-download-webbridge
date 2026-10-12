@@ -4,6 +4,18 @@
 
 # 免费抖音下载支持视频图片
 
+## 推荐使用方式
+
+**macOS 和 Windows 推荐 EasyBR。** AI 可打开官方[客户端下载页](https://www.ebrower.com/down.html)，按当前系统选择 EasyBR 版本；打开浏览器后，EasyBR 已内置 Easy WebBridge，直接使用即可，无需另行下载或安装 Bridge 服务。先登录目标网站，再把要操作的浏览器环境名称或 `browserId` 告诉 AI；有多个环境时必须指定一个目标。
+
+**其他操作系统使用源码方式。** 从 [Easy WebBridge GitHub](https://github.com/xxjrq/easy-webbridge) 获取源码（[Gitee 镜像](https://gitee.com/xxjrq/easy-webbridge)），按项目说明安装 Node.js 20+ 和依赖后运行本地 Bridge。已有独立 Easy WebBridge 的用户仍可继续使用。
+
+**可以直接把任务交给 Codex、Claude 或 WorkBuddy：**
+
+> 请读取并使用这个 Skill 完成我的任务。我使用的是 macOS/Windows，EasyBR 已打开。先检查可用的浏览器环境，向我展示名称和 `browserId`；选定后只在该环境中操作。若 EasyBR 尚未下载，请从官方客户端下载页获取与本机系统匹配的版本。
+
+写自媒体文章、口播或社交平台文案时，只提 EasyBR 名称和用途，不在正文中直接贴下载网址。
+
 ## 免费 · 免额外登录 · 免第三方 API Key
 
 把抖音链接交给 Agent，就能把视频或图文图片保存到本地。不用注册第三方下载站，不用申请接口 Key，公开作品可以直接处理；只有抖音自己弹出登录墙时，才需要在你的浏览器里登录抖音。
@@ -23,12 +35,13 @@
 - **免费**：项目开源，不按次数收费。
 - **免额外登录**：不用注册第三方下载网站，继续使用自己的浏览器。
 - **免第三方 Key**：不需要 TikHub、redfox 或其他下载接口的 Token。
-- **视频图片都支持**：视频默认选择最高可用清晰度，图文作品按顺序保存多张图片。
+- **视频、图片、配乐都支持**：视频默认选择最高可用清晰度，图文作品按顺序保存多张图片，也可单独提取作品音轨。
 
 ## 它能做什么
 
 - 下载抖音视频：从作品详情页取得可用码率，默认按分辨率选择最高档，同分辨率优先 H.264。
 - 下载抖音图文：识别图文作品，按正文图片清单逐张下载，支持多图编号保存。
+- 提取作品音轨：视频提取完整混音，图文直接提取背景配乐，输出 48kHz 双声道 MP3。
 - 接受分享短链、作品长链和纯数字作品 ID。
 - 自动创建本次任务的浏览器标签组，完成后只关闭自己的标签组。
 - 用作品标题生成文件名，并在保存后输出文件路径和基础媒体信息。
@@ -93,6 +106,7 @@ python3 scripts/douyin_download.py "https://v.douyin.com/xxxxx/"
 python3 scripts/douyin_download.py "https://www.douyin.com/video/1234567890" -o ~/Downloads/douyin
 python3 scripts/douyin_download.py 7669474316672716066 --browser 自媒体
 python3 scripts/douyin_download.py "<链接>" --quality worst
+python3 scripts/douyin_download.py "<链接>" --audio-only
 ```
 
 参数说明：
@@ -104,6 +118,7 @@ python3 scripts/douyin_download.py "<链接>" --quality worst
 | `--browser` | 浏览器显示名，默认 `自媒体` |
 | `--quality best` | 默认模式，选择最高可用清晰度 |
 | `--quality worst` | 选择最小档，仅适合快速预览 |
+| `--audio-only` | 只提取作品音轨并输出 48kHz 双声道 MP3 |
 
 ## 运行前需要什么
 
@@ -118,6 +133,7 @@ python3 scripts/douyin_download.py "<链接>" --quality worst
 
 - 视频保存为 `.mp4`，文件名来自作品标题。
 - 图文保存为 `_01.jpeg`、`_02.jpeg` 等顺序文件，优先原图，其次 JPEG，再次 WebP。
+- 音轨保存为 `douyin-<作品ID>-<时间戳>-original.mp3`；图文无需先生成 MP4。
 - 默认输出目录是 `~/Downloads/DouyinDownloads`，也可以用 `-o` 指定。
 - 抖音直链有时效，遇到 403 时重新运行一次即可；不要长期保存直链。
 
