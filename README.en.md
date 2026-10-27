@@ -42,7 +42,7 @@ Give an Agent a Douyin link and it saves the video or image post locally. You do
 - Downloads Douyin videos by reading available bitrate variants from the work detail page.
 - Chooses the highest resolution by default and prefers H.264 when resolutions match.
 - Downloads Douyin image posts from the detail image list, with numbered files for multi-image posts.
-- Accepts share links, long URLs, and numeric work IDs.
+- Accepts canonical work URLs, numeric IDs, and Douyin share short links that resolve from one safely checked HTTPS response. It reads `Location` to extract the work ID and never requests the redirect target.
 - Keeps each run in its own browser task group and closes only that group afterward.
 - Creates readable filenames from the work title and prints saved paths plus basic media information.
 - Free to use and does not require TikHub, redfox, or another third-party API key.
@@ -96,13 +96,13 @@ git clone https://github.com/xxjrq/douyin-download-webbridge.git ~/.agents/skill
 After Easy WebBridge is connected, ask any compatible Agent:
 
 ```text
-Use douyin-download-webbridge to download this Douyin work: https://v.douyin.com/xxxxx/
+Use douyin-download-webbridge to download this Douyin work: https://www.douyin.com/video/123456789012
 ```
 
 Or run the script directly:
 
 ```bash
-python3 scripts/douyin_download.py "https://v.douyin.com/xxxxx/"
+python3 scripts/douyin_download.py "https://www.douyin.com/video/123456789012"
 python3 scripts/douyin_download.py "https://www.douyin.com/video/1234567890" -o ~/Downloads/douyin
 python3 scripts/douyin_download.py 7669474316672716066 --browser Creator
 python3 scripts/douyin_download.py "<link>" --quality worst
@@ -112,7 +112,7 @@ Options:
 
 | Option | Purpose |
 | --- | --- |
-| First argument | Douyin share link, long URL, or work ID |
+| First argument | Canonical Douyin work URL, work ID, or a safely resolvable `v.douyin.com` short link |
 | `-o, --out` | Output directory; defaults to `~/Downloads/DouyinDownloads` |
 | `--browser` | Target browser display name or `browserId`; may be omitted only when one browser is online |
 | `--quality best` | Default mode; choose the highest available quality |
@@ -133,6 +133,8 @@ The script checks the Bridge and online browsers before opening the work. An exp
 - Image posts are saved as `_01.jpeg`, `_02.jpeg`, and so on, preferring original, JPEG, then WebP variants.
 - The default output directory is `~/Downloads/DouyinDownloads`; use `-o` to change it.
 - Douyin media URLs expire. If a download returns 403, run the command again to obtain a fresh URL.
+- Media files are fetched only from public HTTPS URLs. The script checks DNS and pins connections to verified public IPs, rejecting local/private addresses, non-HTTPS URLs, and redirects. If system DNS returns a `198.18.0.0/15` fake IP or fails, only the media hostname (never its path or signed query) is sent to the fixed AliDNS HTTPS resolver; all returned addresses must be public. If an environment proxy is used, the HTTPS CONNECT target is still the verified IP and TLS checks the original hostname. Unverifiable addresses fail closed.
+- A share short link triggers one HTTPS request pinned to verified public IPs. Only a direct `Location` to a supported Douyin work URL is accepted; the target is never requested. Multi-hop, non-work, and unverifiable redirects fail and ask for the canonical URL or ID.
 
 ## Boundaries
 

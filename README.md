@@ -42,7 +42,7 @@
 - 下载抖音视频：从作品详情页取得可用码率，默认按分辨率选择最高档，同分辨率优先 H.264。
 - 下载抖音图文：识别图文作品，按正文图片清单逐张下载，支持多图编号保存。
 - 提取作品音轨：视频提取完整混音，图文直接提取背景配乐，输出 48kHz 双声道 MP3。
-- 接受分享短链、作品长链和纯数字作品 ID。
+- 接受作品长链、纯数字作品 ID，以及可在单次安全 HTTPS 响应中解析的抖音分享短链；只读取 `Location` 提取 ID，不请求跳转目标。
 - 自动创建本次任务的浏览器标签组，完成后只关闭自己的标签组。
 - 用作品标题生成文件名，并在保存后输出文件路径和基础媒体信息。
 - 免费使用，不需要 TikHub、redfox 或其他第三方 API Key。
@@ -96,13 +96,13 @@ git clone https://github.com/xxjrq/douyin-download-webbridge.git ~/.agents/skill
 先确认 Easy WebBridge 已经连接浏览器，然后对任意支持 Agent 说：
 
 ```text
-使用 douyin-download-webbridge 下载这个抖音作品：https://v.douyin.com/xxxxx/
+使用 douyin-download-webbridge 下载这个抖音作品：https://www.douyin.com/video/123456789012
 ```
 
 也可以直接运行脚本：
 
 ```bash
-python3 scripts/douyin_download.py "https://v.douyin.com/xxxxx/"
+python3 scripts/douyin_download.py "https://www.douyin.com/video/123456789012"
 python3 scripts/douyin_download.py "https://www.douyin.com/video/1234567890" -o ~/Downloads/douyin
 python3 scripts/douyin_download.py 7669474316672716066 --browser 自媒体
 python3 scripts/douyin_download.py "<链接>" --quality worst
@@ -113,7 +113,7 @@ python3 scripts/douyin_download.py "<链接>" --audio-only
 
 | 参数 | 作用 |
 | --- | --- |
-| 第一个参数 | 抖音分享短链、长链或作品 ID |
+| 第一个参数 | 抖音作品长链、作品 ID，或可安全解析的 `v.douyin.com` 短链 |
 | `-o, --out` | 输出目录，默认 `~/Downloads/DouyinDownloads` |
 | `--browser` | 目标浏览器显示名或 `browserId`；只有一个环境在线时可省略 |
 | `--quality best` | 默认模式，选择最高可用清晰度 |
@@ -136,6 +136,8 @@ python3 scripts/douyin_download.py "<链接>" --audio-only
 - 音轨保存为 `douyin-<作品ID>-<时间戳>-original.mp3`；图文无需先生成 MP4。
 - 默认输出目录是 `~/Downloads/DouyinDownloads`，也可以用 `-o` 指定。
 - 抖音直链有时效，遇到 403 时重新运行一次即可；不要长期保存直链。
+- 媒体文件仅通过公网 HTTPS 地址下载；脚本核验 DNS 并将连接固定到核验过的公网 IP，拒绝本机/内网地址、非 HTTPS 地址和重定向。若系统 DNS 返回 fake-IP 或失败，只向固定 AliDNS HTTPS 解析器发送媒体主机名（不含路径或签名参数），并核验返回地址；环境代理若参与 HTTPS CONNECT，目标仍是已核验的公网 IP。无法核验时直接失败。
+- 分享短链只发起一次固定公网 IP 的 HTTPS 请求；只接受响应中直接指向受支持抖音作品长链的 `Location`。不会请求跳转目标；多跳、非作品页或无法核验的短链会失败并要求提供长链或 ID。
 
 ## 常见问题
 

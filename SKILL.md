@@ -1,6 +1,6 @@
 ---
 name: douyin-download-webbridge
-description: 免费下载抖音视频、图文图片和作品音轨，不用注册第三方下载站，也不需要 TikHub、redfox 等第三方 API Key。用户提供抖音分享短链、长链或作品 ID，要求下载视频、保存图文图片、提取图文配乐或获取高清素材时使用。通过 Easy WebBridge 复用用户明确选择或无歧义确定的浏览器；遇到登录墙、验证墙或详情访问限制时停止，不切换环境、不绕过，并请用户自行处理。视频默认选择最高可用分辨率并优先 H.264；图文只保存详情接口确认属于当前作品的图片，无法确认时明确失败；音轨统一输出 48kHz 双声道 MP3。
+description: 免费下载抖音视频、图文图片和作品音轨，不用注册第三方下载站，也不需要 TikHub、redfox 等第三方 API Key。用户要求下载抖音作品、图文图片或音轨时使用；支持抖音作品长链、数字 ID，以及可在单次安全 HTTPS 响应中解析为受支持抖音长链的分享短链。通过 Easy WebBridge 复用用户明确选择或唯一在线的浏览器；遇到登录墙、验证墙或详情访问限制时停止，不切换环境、不绕过，并请用户自行处理。视频默认选择最高可用分辨率并优先 H.264；图文只保存详情接口确认属于当前作品的图片，无法确认时明确失败；音轨统一输出 48kHz 双声道 MP3。
 ---
 
 
@@ -30,7 +30,7 @@ description: 免费下载抖音视频、图文图片和作品音轨，不用注�
 ## 1. 一键命令
 
 ```bash
-python3 scripts/douyin_download.py "https://v.douyin.com/xxxxx/"          # 默认下载目录
+python3 scripts/douyin_download.py "https://www.douyin.com/video/123456789012" # 默认下载目录
 python3 scripts/douyin_download.py 7669474316672716066                    # 作品 ID 也认
 python3 scripts/douyin_download.py "<链接>" -o /path/to/dir               # 指定输出目录
 python3 scripts/douyin_download.py "<链接>" --browser 自媒体               # 指定浏览器
@@ -42,7 +42,7 @@ python3 scripts/douyin_download.py "<链接>" --audio-only                 # 只
 `--quality worst` 只用于「快速看一眼」的预览场景。
 `--audio-only` 对视频提取完整混音，对图文提取背景配乐，并统一转为 48kHz 双声道 MP3。
 
-脚本自动完成：检查 EasyBR 内置 Bridge → 短链解析 → 打开目标浏览器页面 → 取可用媒体直链 → 下载 → 校验 → 关闭本次标签组。检测到登录/验证拦截或无法确认详情访问状态时保留标签并停止。
+脚本自动完成：检查 EasyBR 内置 Bridge → 验证输入 → 打开目标浏览器页面 → 取可用媒体直链 → 下载 → 校验 → 关闭本次标签组。检测到登录/验证拦截或无法确认详情访问状态时保留标签并停止。
 
 ## 2. 前置门禁
 
@@ -56,9 +56,10 @@ python3 scripts/douyin_download.py "<链接>" --audio-only                 # 只
 
 ## 3. 输入解析
 
-接受三种输入：分享短链、长链、纯数字 modal_id。
+直接下载接受抖音作品长链、纯数字 modal_id，以及严格单独提供的 `https://v.douyin.com/...` 分享短链。短链只发送一次固定到已核验公网 IP 的 HTTPS 请求，读取响应中的 `Location` 并仅提取受支持抖音长链的作品 ID；绝不请求 Location 目标或跟随重定向。
 
-- 短链用 `curl -sIL ... -w '%{url_effective}'` 跟重定向，从结果里正则提取 `/video/{id}` 或 `/note/{id}`。
+- 短链仅接受一个 HTTPS `v.douyin.com` 链接；DNS 不可核验、请求失败、无单个有效 Location、Location 指向外站/短链/非作品页或无法提取 ID 时立即失败，请用户提供对应的抖音长链或数字 ID。
+- 不请求 Location 目标，也不跟随用户提供 URL 的重定向，避免访问外站或内网地址；媒体下载请求也不跟随 HTTP 重定向。
 - **`/note/` 是图文作品**，不是视频，走第 5 节分支。
 - 提取不到作品 ID 立即失败，不猜、不兜底。
 
@@ -87,6 +88,8 @@ python3 scripts/douyin_download.py "<链接>" --audio-only                 # 只
 ### 4.2 下载
 
 必须带移动端 UA 与 `Referer: https://www.douyin.com/`，否则可能 403。
+
+媒体文件地址只允许公网 HTTPS：下载前解析并核验所有 DNS 地址，拒绝本机、内网、非公网地址及非 HTTPS 协议。若系统 DNS 返回 `198.18.0.0/15` fake-IP 或解析失败，会向固定的 AliDNS HTTPS 解析器只发送媒体主机名，核验所有 A/AAAA 结果均为公网地址后才继续；不会发送媒体 URL、路径或签名参数。curl 通过 `--connect-to` 固定到已核验 IP；即使使用环境代理，HTTPS CONNECT 目标也是该 IP，且 TLS 仍按原主机名校验证书。请求不会自动跟随重定向。若无法取得可核验的公网地址，脚本会停止。
 
 ### 4.3 校验
 
@@ -155,7 +158,7 @@ const kind = hasImages || d.aweme_type === 68 ? "note" : hasVideo ? "video" : nu
 | ffmpeg/ffprobe 找不到 | 工具路径为空 | 安装 FFmpeg 并将其 bin 目录加入 PATH；Apple Silicon macOS 也会检查 `/opt/homebrew/bin` |
 | 直接读 `video.src` | 只拿到 540p | 必须走 detail 接口取 `bit_rate[]` |
 | 只按 `w×h` 选档 | 同分辨率选到 HEVC，剪辑软件兼容性差 | 同分辨率优先 `cs=0`（H.264），见 `_codec_rank` |
-| 用短链路径或首屏 `<video>` 判类型 | 视频元素延迟挂载时被误判成图文 | 优先按 detail 媒体字段判型；详情状态不明就停止，图文仅使用 detail 图片清单 |
+| 只看分享短链路径或首屏 `<video>` 判类型 | 短链仅检查一次直接 `Location`，视频元素可能延迟挂载 | 短链若需多跳或无法提取 ID，请换成长链或 ID；优先按 detail 媒体字段判型，详情状态不明就停止 |
 | DOM 直抓 `<img>` | 混入推荐位小图（实测 11 张里只有 1 张是正文） | detail 的 `images[]` 是唯一清单；DOM 原图须按图片 ID 匹配，detail 不可用时失败 |
 | 自己改写 `~noop.jpeg` | 签名失效，下载 403 | 只能用页面原有的 URL，按图片 ID 匹配 |
 | 只取 `images[].url_list[0]` | 固定拿到 54KB 的 `q75.webp` | 遍历全部 url_list，优先 `.jpeg`（113KB，质量翻倍） |

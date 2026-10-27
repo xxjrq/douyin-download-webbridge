@@ -6,7 +6,7 @@
 无需注册第三方下载站，也无需 TikHub / redfox API Key。
 
 用法:
-    python3 douyin_download.py "https://v.douyin.com/xxxxx/"
+    python3 douyin_download.py "https://www.douyin.com/video/123456789012"
     python3 douyin_download.py 7669474316672716066
     python3 douyin_download.py "<链接>" -o ~/Downloads/DouyinDownloads
     python3 douyin_download.py "<链接>" --browser 自媒体
@@ -15,15 +15,19 @@
 """
 
 import argparse
+import ipaddress
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlencode, urlsplit
 
 # ---------- 常量（改这里即可） ----------
 
@@ -54,7 +58,15 @@ UA_DESKTOP = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 REFERER = "https://www.douyin.com/"
+FAKE_IP_RANGE = ipaddress.ip_network("198.18.0.0/15")
+ALIDNS_HTTPS_BOOTSTRAP_IPS = ("223.5.5.5", "223.6.6.6")
 IMAGE_AWEME_TYPES = {68}
+DOUYIN_URL_HOSTS = {
+    "douyin.com", "www.douyin.com", "iesdouyin.com", "www.iesdouyin.com",
+    "v.douyin.com",
+}
+LONG_WORK_PATH = re.compile(r"^/(?:share/)?(video|note)/(\d+)/?$")
+SHORT_LINK_PATH = re.compile(r"^/[A-Za-z0-9_-]{1,128}/?$")
 ACCESS_BARRIER_TEXT = re.compile(
     r"请先登录|请登录后|登录后(?:继续|查看|访问)|扫码登录|短信验证码|"
     r"安全验证|请完成验证|完成验证后|滑块验证|验证码|"
@@ -165,38 +177,89 @@ def check_bridge():
 
 def parse_input(user_input):
     """返回 (aweme_id, kind)，kind ∈ {video, note}；失败返回 (None, None)"""
+    if not isinstance(user_input, str) or any(ord(ch) < 32 or ord(ch) == 127 for ch in user_input):
+        log(FAIL, "输入包含控制字符或不是文本；请只提供抖音作品链接或数字 ID。")
+        return None, None
     s = user_input.strip()
+    if not s or s.startswith("-") or "\\" in s or any(ch.isspace() for ch in s):
+        log(FAIL, "输入格式不安全；请只提供抖音作品链接或数字 ID。")
+        return None, None
 
     # 纯数字 = modal_id
     if re.fullmatch(r"\d{10,25}", s):
         return s, "video"
 
-    # 提取 URL
-    m = re.search(r"https?://[^\s]+", s)
-    url = m.group(0) if m else s
-
-    # 已经是长链
-    long_m = re.search(r"douyin\.com/(share/)?(video|note)/(\d+)", url)
-    if long_m:
-        return long_m.group(3), long_m.group(2)
-
-    # 短链：跟随重定向拿真实地址
-    rc, out, _ = run(
-        ["curl", "-sIL", url, "-o", "/dev/null", "-w", "%{url_effective}",
-         "-A", UA_MOBILE]
-    )
-    effective = out.strip().splitlines()[-1] if out.strip() else ""
-    if not effective:
-        log(FAIL, f"短链解析失败，没拿到跳转地址: {url}")
+    try:
+        parsed = urlsplit(s)
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        log(FAIL, "抖音链接格式无效。")
         return None, None
-    log(INFO, f"短链 → {effective}")
+    if parsed.scheme.lower() not in ("http", "https"):
+        log(FAIL, "只接受 HTTP(S) 抖音作品链接。")
+        return None, None
+    expected_port = 443 if parsed.scheme.lower() == "https" else 80
+    if port not in (None, expected_port) or parsed.username is not None or parsed.password is not None:
+        log(FAIL, "抖音链接不能包含非标准端口或账号凭据。")
+        return None, None
+    if host not in DOUYIN_URL_HOSTS:
+        log(FAIL, "只接受抖音域名下的作品链接；外站链接不会请求。")
+        return None, None
 
-    m2 = re.search(r"douyin\.com/(share/)?(video|note)/(\d+)", effective)
-    if m2:
-        return m2.group(3), m2.group(2)
+    if host == "v.douyin.com" and SHORT_LINK_PATH.fullmatch(parsed.path):
+        if parsed.scheme.lower() != "https" or s.count("https://") != 1:
+            log(FAIL, "分享短链必须是唯一的 HTTPS v.douyin.com 链接。")
+            return None, None
+        resolved = resolve_share_short_link(s)
+        if not resolved:
+            log(FAIL, "短链未在一次安全请求内指向受支持的抖音作品长链；请提供作品长链或数字 ID。")
+            return None, None
+        return resolved
 
-    log(FAIL, f"无法从地址里提取作品 ID: {effective}")
+    long_match = LONG_WORK_PATH.fullmatch(parsed.path)
+    if long_match:
+        return long_match.group(2), long_match.group(1)
+
+    log(FAIL, "抖音 URL 路径不是受支持的作品长链；请提供 /video/{id}、/note/{id} 长链或数字 ID。")
     return None, None
+
+
+def resolve_share_short_link(short_url):
+    """Read one pinned v.douyin.com response; never request its redirect target."""
+    try:
+        parsed = urlsplit(short_url)
+        if (parsed.scheme != "https" or parsed.hostname != "v.douyin.com" or
+                parsed.port not in (None, 443) or parsed.username is not None or
+                parsed.password is not None or not SHORT_LINK_PATH.fullmatch(parsed.path)):
+            return None
+        resolve_args = media_url_resolve_args(short_url)
+        if resolve_args is None:
+            return None
+        rc, output, _ = run([
+            "curl", "--disable", "--globoff", "-s", "--proxy", "", "--noproxy", "*",
+            *resolve_args, "--max-redirs", "0", "-o", os.devnull,
+            "-w", "%{http_code}\\t%{redirect_url}", "--", short_url,
+        ], "检查抖音分享短链")
+        if rc != 0:
+            return None
+        status, separator, location = output.rstrip("\r\n").partition("\t")
+        if (not separator or status not in {"301", "302", "303", "307", "308"} or
+                not location or location != location.strip() or
+                any(ord(char) < 32 or ord(char) == 127 for char in location)):
+            return None
+        target = urlsplit(location)
+        if (target.scheme != "https" or target.hostname not in {
+                "douyin.com", "www.douyin.com", "iesdouyin.com", "www.iesdouyin.com",
+        } or target.port not in (None, 443) or target.username is not None or
+                target.password is not None or target.fragment):
+            return None
+        match = LONG_WORK_PATH.fullmatch(target.path)
+        if not match:
+            return None
+        return match.group(2), match.group(1)
+    except (ValueError, OSError, UnicodeError):
+        return None
 
 
 # ---------- 浏览器操作 ----------
@@ -549,29 +612,174 @@ def safe_filename(name, fallback="douyin"):
     return name[:40] or fallback
 
 
+def make_staging_file(out_path, suffix=".part"):
+    directory = os.path.dirname(os.path.abspath(out_path))
+    prefix = f".{os.path.basename(out_path)}."
+    fd, staging_path = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=directory)
+    os.close(fd)
+    return staging_path
+
+
+def publish_file_no_replace(staging_path, out_path):
+    """Atomically publish a completed staging file without replacing a target."""
+    try:
+        os.link(staging_path, out_path)
+    except FileExistsError:
+        log(FAIL, f"目标文件已存在，保留原文件：{out_path}")
+        return False
+    except OSError as error:
+        log(FAIL, f"无法安全创建目标文件 {out_path}: {error}")
+        return False
+    return True
+
+
+def media_url_resolve_args(url):
+    """Validate a media URL and pin public DNS answers for curl/proxy CONNECT."""
+    try:
+        if not isinstance(url, str) or any(ord(char) < 32 or ord(char) == 127 for char in url):
+            return None
+        parsed = urlsplit(url)
+        if (parsed.scheme.lower() != "https" or not parsed.hostname or
+                parsed.username is not None or parsed.password is not None or
+                parsed.port not in (None, 443) or parsed.fragment):
+            return None
+        if parsed.hostname.endswith("."):
+            return None
+        hostname = parsed.hostname.lower()
+        if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith((".localhost", ".local", ".internal")):
+            return None
+        try:
+            literal = ipaddress.ip_address(hostname)
+            addresses = [literal]
+        except ValueError:
+            try:
+                infos = socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
+                system_addresses = sorted(
+                    {ipaddress.ip_address(info[4][0]) for info in infos},
+                    key=lambda address: (address.version, int(address)),
+                )
+            except (OSError, ValueError, IndexError):
+                system_addresses = []
+            non_public = [address for address in system_addresses if not address.is_global]
+            if any(address not in FAKE_IP_RANGE for address in non_public):
+                return None
+            addresses = [address for address in system_addresses if address.is_global]
+            if not addresses:
+                addresses = resolve_public_addresses_via_doh(hostname)
+        if not addresses or any(not address.is_global for address in addresses):
+            return None
+        resolve_host = f"[{hostname}]" if ":" in hostname else hostname
+        return [
+            part
+            for address in addresses
+            for part in (
+                "--connect-to",
+                f"{resolve_host}:443:{'[' + str(address) + ']' if address.version == 6 else str(address)}:443",
+            )
+        ]
+    except (ValueError, OSError, UnicodeError):
+        return None
+
+
+def resolve_public_addresses_via_doh(hostname):
+    """Fallback for fake-IP DNS. Query only the hostname over fixed AliDNS HTTPS."""
+    addresses = set()
+    for record_type in ("A", "AAAA"):
+        query = urlencode({"name": hostname, "type": record_type})
+        endpoint = f"https://dns.alidns.com/resolve?{query}"
+        response = None
+        for resolver_ip in ALIDNS_HTTPS_BOOTSTRAP_IPS:
+            command_args = [
+                "curl", "--disable", "--globoff", "-sS", "--max-time", "8",
+                "--max-filesize", "65536", "-H", "accept: application/dns-json",
+            ]
+            if response is None:
+                command_args.extend([
+                    "--proxy", "", "--noproxy", "*", "--resolve",
+                    f"dns.alidns.com:443:{resolver_ip}",
+                ])
+            command_args.extend([
+                "-w", "\\n%{http_code}", "--", endpoint,
+            ])
+            rc, output, _ = run(command_args, "使用固定 DNS over HTTPS 核验媒体域名")
+            if rc == 0:
+                response = output
+                break
+        if response is None:
+            # If direct bootstrap fails, allow the configured proxy only through
+            # a CONNECT tunnel to the fixed public resolver IP.
+            for resolver_ip in ALIDNS_HTTPS_BOOTSTRAP_IPS:
+                command_args = [
+                    "curl", "--disable", "--globoff", "-sS", "--max-time", "8",
+                    "--max-filesize", "65536", "-H", "accept: application/dns-json",
+                    "--connect-to", f"dns.alidns.com:443:{resolver_ip}:443",
+                    "-w", "\\n%{http_code}", "--", endpoint,
+                ]
+                rc, output, _ = run(command_args, "通过固定目标代理核验媒体域名")
+                if rc == 0:
+                    response = output
+                    break
+        if response is None:
+            return None
+        body, separator, status = response.rstrip("\r\n").rpartition("\n")
+        if not separator or status != "200":
+            return None
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return None
+        if (not isinstance(payload, dict) or type(payload.get("Status")) is not int or
+                payload.get("Status") != 0):
+            return None
+        expected_type = "1" if record_type == "A" else "28"
+        for answer in payload.get("Answer", []):
+            if not isinstance(answer, dict) or str(answer.get("type")) != expected_type:
+                continue
+            try:
+                address = ipaddress.ip_address(answer["data"])
+            except (KeyError, ValueError, TypeError):
+                return None
+            if not address.is_global:
+                return None
+            addresses.add(address)
+    return sorted(addresses, key=lambda address: (address.version, int(address))) or None
+
+
 def download(url, out_path, referer=REFERER):
-    rc, out, err = run(
-        ["curl", "-s", "-A", UA_MOBILE, "-e", referer, url, "-o", out_path,
-         "-w", "%{http_code}\\t%{size_download}\\t%{redirect_url}\\t%{content_type}"]
-    )
-    parts = out.rstrip("\r\n").split("\t")
-    status = parts[0] if parts else "?"
-    redirect_url = parts[2] if len(parts) >= 3 else ""
-    content_type = parts[3].lower() if len(parts) >= 4 else ""
-    if status in ("401", "403", "429") or (status.startswith("3") and is_access_barrier_url(redirect_url)):
-        if os.path.isfile(out_path):
-            os.unlink(out_path)
-        raise AccessBarrierError(f"下载请求返回访问限制 HTTP {status}")
-    if status == "200" and content_type.startswith("text/html"):
-        if os.path.isfile(out_path):
-            os.unlink(out_path)
-        raise AccessBarrierError("下载请求返回验证或登录页面，而不是媒体文件")
-    if len(parts) >= 2 and status == "200":
-        size = int(parts[1])
+    resolve_args = media_url_resolve_args(url)
+    if resolve_args is None:
+        log(FAIL, "媒体地址不是可安全访问的公网 HTTPS 地址，已停止下载")
+        return False
+    staging_path = make_staging_file(out_path, suffix=".download")
+    try:
+        rc, out, err = run(
+            ["curl", "--disable", "--globoff", "-s", *resolve_args,
+             "-A", UA_MOBILE, "-e", referer, "-o", staging_path,
+             "-w", "%{http_code}\\t%{size_download}\\t%{redirect_url}\\t%{content_type}",
+             "--", url]
+        )
+        parts = out.rstrip("\r\n").split("\t")
+        status = parts[0] if parts else "?"
+        redirect_url = parts[2] if len(parts) >= 3 else ""
+        content_type = parts[3].lower() if len(parts) >= 4 else ""
+        if status in ("401", "403", "429") or (status.startswith("3") and is_access_barrier_url(redirect_url)):
+            raise AccessBarrierError(f"下载请求返回访问限制 HTTP {status}")
+        if status == "200" and content_type.startswith("text/html"):
+            raise AccessBarrierError("下载请求返回验证或登录页面，而不是媒体文件")
+        if rc != 0 or len(parts) < 2 or status != "200":
+            log(FAIL, f"下载失败 http={status} {err[:200]}")
+            return False
+        size = os.path.getsize(staging_path)
+        if size <= 0 or int(parts[1]) <= 0:
+            log(FAIL, f"下载失败 http={status} 文件为空")
+            return False
+        if not publish_file_no_replace(staging_path, out_path):
+            return False
         log(OK, f"下载完成 {size/1024/1024:.2f} MB → {os.path.basename(out_path)}")
-        return size > 0
-    log(FAIL, f"下载失败 http={status} {err[:200]}")
-    return False
+        return True
+    finally:
+        if os.path.exists(staging_path):
+            os.unlink(staging_path)
 
 
 def probe(path):
@@ -636,28 +844,34 @@ def try_audio_only(browser_id, tab_id, aweme_id, args):
     stamp = int(time.time() * 1000)
     source_path = os.path.join(args.out, f".douyin-{aweme_id}-{stamp}.source")
     out_path = os.path.join(args.out, f"douyin-{aweme_id}-{stamp}-original.mp3")
+    staging_audio = None
+    source_created = False
     try:
         if not download(source_url, source_path):
             return [], detail
+        source_created = True
+        staging_audio = make_staging_file(out_path, suffix=".mp3")
         rc, _, err = run([
             FFMPEG_BIN, "-y", "-v", "error", "-i", source_path, "-vn",
-            "-ac", "2", "-ar", "48000", "-c:a", "libmp3lame", "-q:a", "2", out_path,
+            "-ac", "2", "-ar", "48000", "-c:a", "libmp3lame", "-q:a", "2", staging_audio,
         ], "提取作品音轨")
         if rc != 0:
             log(FAIL, f"音频转码失败: {err.strip()[:400]}")
             return [], detail
-        info = probe_audio(out_path)
+        info = probe_audio(staging_audio)
         if not info or info["dur"] <= 0 or info["sample_rate"] != 48000 or info["channels"] != 2:
             log(FAIL, "音频校验失败，未得到 48kHz 双声道有效音轨")
-            if os.path.isfile(out_path):
-                os.unlink(out_path)
+            return [], detail
+        if not publish_file_no_replace(staging_audio, out_path):
             return [], detail
         log(OK, f"音频校验 {info['codec']} | {info['sample_rate']}Hz | "
                 f"{info['channels']}ch | {info['dur']}s")
         return [out_path], detail
     finally:
-        if os.path.isfile(source_path):
+        if source_created and os.path.isfile(source_path):
             os.unlink(source_path)
+        if staging_audio and os.path.isfile(staging_audio):
+            os.unlink(staging_audio)
 
 
 def try_video(browser_id, tab_id, aweme_id, args):
@@ -745,7 +959,7 @@ def try_note(browser_id, tab_id, aweme_id, args):
 
 def main():
     ap = argparse.ArgumentParser(description="抖音视频/图文下载（Easy WebBridge）")
-    ap.add_argument("input", help="抖音分享短链 / 长链 / modal_id")
+    ap.add_argument("input", help="抖音作品长链 / modal_id；分享短链请改用对应长链或 ID")
     ap.add_argument("-o", "--out", default=DEFAULT_OUT_DIR, help="输出目录")
     ap.add_argument("--browser", help="目标浏览器显示名或 browserId（仅一个环境在线时可省略；多个在线时必须指定）")
     ap.add_argument("--quality", default="best", choices=["best", "worst"], help="清晰度")
