@@ -18,7 +18,7 @@ For social posts, articles, and voiceover copy, mention EasyBR by name and descr
 
 ## Free · no extra downloader account · no third-party API key
 
-Give an Agent a Douyin link and it saves the video or image post locally. You do not need to register with a third-party downloader or request an API key. Public works can usually be handled directly; sign in to Douyin only if Douyin itself shows a login wall.
+Give an Agent a Douyin link and it saves the video or image post locally. You do not need to register with a third-party downloader or request an API key. If Douyin shows a login wall, verification challenge, or restricted detail response, the script stops and preserves its task tab for you to handle manually.
 
 [简体中文](README.md) | [English](README.en.md)
 
@@ -114,7 +114,7 @@ Options:
 | --- | --- |
 | First argument | Douyin share link, long URL, or work ID |
 | `-o, --out` | Output directory; defaults to `~/Downloads/DouyinDownloads` |
-| `--browser` | Browser display name; defaults to `自媒体` |
+| `--browser` | Target browser display name or `browserId`; defaults to the unique `自媒体` environment when available |
 | `--quality best` | Default mode; choose the highest available quality |
 | `--quality worst` | Choose the smallest variant for a quick preview |
 
@@ -125,7 +125,7 @@ Options:
 - At least one Chromium browser online; sign in to Douyin if the page shows a login wall.
 - `ffmpeg` and `ffprobe` are discovered through `PATH`; Apple Silicon macOS also checks `/opt/homebrew/bin`. On Windows, add FFmpeg's `bin` directory to `PATH`. Downloads still work without ffprobe, but media inspection is skipped; `--audio-only` requires ffmpeg.
 
-The script checks the Bridge and online browsers before opening the work. If the browser named `自媒体` is unavailable, it reports the fallback browser it selected. It never silently starts a new browser.
+The script checks the Bridge and online browsers before opening the work. An explicit `--browser` must match that online display name or `browserId`; it never substitutes another browser. Without an explicit selection, it prefers a unique `自媒体` environment, or selects the only online browser. If multiple online browsers remain, it stops and asks you to choose one.
 
 ## Output
 
@@ -136,7 +136,7 @@ The script checks the Bridge and online browsers before opening the work. If the
 
 ## Boundaries
 
-The Skill stops at login walls and risk-control pages. It does not bypass CAPTCHA, access controls, or platform restrictions. It does not upload, publish, comment, send messages, or collect post-publication metrics.
+The Skill stops at login walls, verification challenges, and restricted detail responses, preserves the task tab, and asks you to handle the page manually. It does not retry through the barrier, switch accounts, or bypass CAPTCHA, access controls, or platform restrictions. Image posts are downloaded only from the work's detail image list; if that list cannot be confirmed, the download fails instead of using page-wide recommendation images. It does not upload, publish, comment, send messages, or collect post-publication metrics.
 
 Only download content you created, have permission to use, or are otherwise legally allowed to save. Follow Douyin's terms, copyright rules, and privacy requirements.
 

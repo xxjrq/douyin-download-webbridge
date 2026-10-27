@@ -1,14 +1,11 @@
+import pathlib
+import sys
 import unittest
 from unittest.mock import patch
 
-import importlib.util
-import pathlib
 
-
-SCRIPT = pathlib.Path(__file__).parents[1] / "scripts" / "douyin_download.py"
-SPEC = importlib.util.spec_from_file_location("douyin_download", SCRIPT)
-MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MODULE)
+sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "scripts"))
+import douyin_download as MODULE
 
 
 class MediaToolDiscoveryTests(unittest.TestCase):

@@ -55,12 +55,70 @@ UA_DESKTOP = (
 )
 REFERER = "https://www.douyin.com/"
 IMAGE_AWEME_TYPES = {68}
+ACCESS_BARRIER_TEXT = re.compile(
+    r"请先登录|请登录后|登录后(?:继续|查看|访问)|扫码登录|短信验证码|"
+    r"安全验证|请完成验证|完成验证后|滑块验证|验证码|"
+    r"(?:sign[ -]?in|log[ -]?in|captcha|security challenge|verify to continue)",
+    re.IGNORECASE,
+)
 
 OK, FAIL, INFO, WARN = "[OK]", "[FAIL]", "[..]", "[!!]"
 
 
 def log(symbol, msg):
     print(f"{symbol} {msg}", flush=True)
+
+
+class AccessBarrierError(RuntimeError):
+    """Raised when Douyin requires manual login or a human verification step."""
+
+
+def is_access_barrier_text(value):
+    return bool(ACCESS_BARRIER_TEXT.search(str(value or "")))
+
+
+def is_access_barrier_url(value):
+    return bool(re.search(r"(?:login|passport|captcha|verify|challenge)", str(value or ""), re.I))
+
+
+def is_access_barrier_payload(payload):
+    """Inspect structured API errors without interpreting ordinary post text."""
+    if not isinstance(payload, dict):
+        return False
+    for key in ("login_required", "need_login", "verify_required", "captcha_required"):
+        if payload.get(key) is True:
+            return True
+    messages = [payload.get(key) for key in (
+        "status_msg", "message", "error", "error_description", "err",
+    )]
+    if any(is_access_barrier_text(message) for message in messages if message):
+        return True
+    for key in ("status_code", "status", "code"):
+        value = payload.get(key)
+        if value not in (None, 0, "0", 200, "200", "success", "ok"):
+            if any(is_access_barrier_text(message) for message in messages if message):
+                return True
+    return False
+
+
+def raise_if_access_barrier_payload(payload):
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return
+    if is_access_barrier_payload(payload):
+        raise AccessBarrierError("抖音要求登录或人工验证")
+    if isinstance(payload, dict):
+        for key in ("status_code", "status_code_v2"):
+            status = payload.get(key)
+            if status not in (None, 0, "0", 200, "200", "success", "ok"):
+                raise AccessBarrierError("抖音详情接口返回受限或异常状态")
+        if payload.get("detailReady") is False:
+            raise AccessBarrierError("无法确认详情接口访问状态")
+        error_code = re.sub(r"[^a-z0-9]+", "_", str(payload.get("err") or "").lower()).strip("_")
+        if error_code == "no_aweme_detail":
+            raise AccessBarrierError("无法确认详情接口访问状态")
 
 
 def run(cmd, desc=""):
@@ -169,10 +227,45 @@ def navigate_to(browser_id, aweme_id, session):
 def evaluate(browser_id, tab_id, code, wait=0):
     if wait:
         time.sleep(wait)
+    check_page_access_barrier(browser_id, tab_id)
     res = wb(browser_id, "evaluate", {"tabId": tab_id, "code": code})
     if not res or not res.get("ok"):
+        check_page_access_barrier(browser_id, tab_id)
         return None
-    return res.get("result")
+    result = res.get("result")
+    try:
+        raise_if_access_barrier_payload(result)
+    finally:
+        check_page_access_barrier(browser_id, tab_id)
+    return result
+
+
+def check_page_access_barrier(browser_id, tab_id):
+    """Detect explicit login/challenge pages before running another extraction."""
+    code = (
+        '(()=>{const url=location.href||"",title=document.title||"";'
+        'const dialogs=[...document.querySelectorAll('
+        '"[role=dialog], [aria-modal=true], [class*=captcha], [class*=verify], "+'
+        '"[class*=login], [class*=passport], iframe[src*=captcha], iframe[src*=verify]")];'
+        'const text=[title,...dialogs.map(x=>x.innerText||"")].join("\\n");'
+        'const body=(document.body?.innerText||"").slice(0,5000);'
+        'const urlBlocked=/\\/(?:login|passport|captcha|verify|challenge)(?:[/?#]|$)/i.test(url);'
+        'const textBlocked=/请先登录|请登录后|登录后(?:继续|查看|访问)|扫码登录|短信验证码|安全验证|请完成验证|完成验证后|滑块验证|验证码|(?:sign[ -]?in|log[ -]?in|captcha|security challenge|verify to continue)/i.test(text);'
+        'const bodyBlocked=/请先登录|请登录后|登录后继续|扫码登录|安全验证|请完成验证|完成验证后|滑块验证|security challenge|verify to continue/i.test(body);'
+        'return JSON.stringify({blocked:urlBlocked||textBlocked||bodyBlocked,href:url,title:title})})()'
+    )
+    res = wb(browser_id, "evaluate", {"tabId": tab_id, "code": code})
+    if not res or not res.get("ok"):
+        raise AccessBarrierError("无法确认当前页面是否出现登录或验证拦截")
+    raw = res.get("result")
+    try:
+        state = json.loads(raw) if isinstance(raw, str) else raw
+    except json.JSONDecodeError:
+        raise AccessBarrierError("页面状态检查返回了无法解析的结果")
+    if not isinstance(state, dict) or type(state.get("blocked")) is not bool:
+        raise AccessBarrierError("页面状态检查结果缺少有效的 blocked 布尔值")
+    if state["blocked"]:
+        raise AccessBarrierError("检测到抖音登录墙或验证墙")
 
 
 # ---------- 取直链 ----------
@@ -184,11 +277,12 @@ def fetch_video_detail(browser_id, tab_id, aweme_id):
         '(async()=>{try{'
         f'const url="https://www.douyin.com/aweme/v1/web/aweme/detail/?device_platform=webapp&aid=6383&channel=channel_pc_web&aweme_id={aweme_id}";'
         'const j=await(await fetch(url,{credentials:"include"})).json();'
-        'const d=j.aweme_detail;if(!d)return JSON.stringify({err:"no aweme_detail"});'
+        'const status_code=j.status_code??j.status_code_v2??0,status_msg=j.status_msg||"";'
+        'const d=j.aweme_detail;if(!d)return JSON.stringify({status_code:status_code,status_msg:status_msg,err:"no aweme_detail"});'
         'const v=d.video||{};'
         'const brs=(v.bit_rate||[]).map(b=>({gear:b.gear_name,w:(b.play_addr||{}).width||0,'
         'h:(b.play_addr||{}).height||0,url:((b.play_addr||{}).url_list||[])[0]||""})).filter(b=>b.url);'
-        'return JSON.stringify({desc:d.desc||"",duration:v.duration||0,brs:brs})'
+        'return JSON.stringify({status_code:status_code,status_msg:status_msg,desc:d.desc||"",duration:v.duration||0,brs:brs})'
         '}catch(e){return JSON.stringify({err:String(e)})}})()'
     )
     raw = evaluate(browser_id, tab_id, js, wait=3)
@@ -218,7 +312,8 @@ def fetch_kind_probe(browser_id, tab_id, aweme_id, wait=0):
         '(async()=>{try{'
         f'const url="https://www.douyin.com/aweme/v1/web/aweme/detail/?device_platform=webapp&aid=6383&channel=channel_pc_web&aweme_id={aweme_id}";'
         'const j=await(await fetch(url,{credentials:"include"})).json();'
-        'const d=j.aweme_detail;if(!d)return JSON.stringify({detailReady:false});'
+        'const status_code=j.status_code??j.status_code_v2??0,status_msg=j.status_msg||"";'
+        'const d=j.aweme_detail;if(!d)return JSON.stringify({detailReady:false,status_code:status_code,status_msg:status_msg});'
         'const ip=d.image_post_info||{};'
         'const imageLists=[d.images,d.image_list,d.image_infos,d.original_images,'
         'ip.images,ip.image_list,ip.image_infos];'
@@ -229,7 +324,7 @@ def fetch_kind_probe(browser_id, tab_id, aweme_id, wait=0):
         'Array.isArray((b.play_addr||{}).url_list)&&(b.play_addr||{}).url_list.length>0))||'
         'addrs.some(a=>a&&Array.isArray(a.url_list)&&a.url_list.length>0);'
         'return JSON.stringify({detailReady:true,awemeType:d.aweme_type,'
-        'hasImages:hasImages,hasVideo:hasVideo})'
+        'hasImages:hasImages,hasVideo:hasVideo,status_code:status_code,status_msg:status_msg})'
         '}catch(e){return JSON.stringify({detailReady:false,err:String(e)})}})()'
     )
     raw = evaluate(browser_id, tab_id, js, wait=wait)
@@ -244,14 +339,14 @@ def fetch_kind_probe(browser_id, tab_id, aweme_id, wait=0):
 def detect_kind(browser_id, tab_id, aweme_id):
     """打开页面后按详情接口判型，页面 URL 和 DOM 只作兜底。
 
-    页面首屏可能先没有 ``<video>``，把“元素尚未挂载”当成图文会让视频
-    错走图片分支。详情接口暂时不可用时默认先尝试视频；主流程随后仍会
-    自动回退到图文，因此不会牺牲真实图文作品。
+    页面首屏可能先没有 ``<video>``，因此先读取详情接口判型。详情状态
+    无法确认时停止；不以 DOM 推荐图或模糊状态补猜媒体类型。
     """
     for wait in (0, 1, 2):
-        kind = classify_media_probe(
-            fetch_kind_probe(browser_id, tab_id, aweme_id, wait=wait)
-        )
+        probe = fetch_kind_probe(browser_id, tab_id, aweme_id, wait=wait)
+        if probe is None:
+            raise AccessBarrierError("无法读取作品详情并确认访问状态")
+        kind = classify_media_probe(probe)
         if kind:
             return kind
 
@@ -291,10 +386,11 @@ def fetch_note_detail(browser_id, tab_id, aweme_id):
         '(async()=>{try{'
         f'const url="https://www.douyin.com/aweme/v1/web/aweme/detail/?device_platform=webapp&aid=6383&channel=channel_pc_web&aweme_id={aweme_id}";'
         'const j=await(await fetch(url,{credentials:"include"})).json();'
-        'const d=j.aweme_detail;if(!d)return JSON.stringify({err:"no aweme_detail"});'
+        'const status_code=j.status_code??j.status_code_v2??0,status_msg=j.status_msg||"";'
+        'const d=j.aweme_detail;if(!d)return JSON.stringify({status_code:status_code,status_msg:status_msg,err:"no aweme_detail"});'
         'const ims=(d.images||[]).map(im=>({w:im.width||0,h:im.height||0,'
         'urls:im.url_list||[]})).filter(x=>x.urls.length);'
-        'return JSON.stringify({desc:d.desc||"",imgs:ims})'
+        'return JSON.stringify({status_code:status_code,status_msg:status_msg,desc:d.desc||"",imgs:ims})'
         '}catch(e){return JSON.stringify({err:String(e)})}})()'
     )
     raw = evaluate(browser_id, tab_id, js, wait=2)
@@ -330,7 +426,8 @@ def fetch_audio_detail(browser_id, tab_id, aweme_id):
         '(async()=>{try{'
         f'const url="https://www.douyin.com/aweme/v1/web/aweme/detail/?device_platform=webapp&aid=6383&channel=channel_pc_web&aweme_id={aweme_id}";'
         'const j=await(await fetch(url,{credentials:"include"})).json();'
-        'const d=j.aweme_detail;if(!d)return JSON.stringify({err:"no aweme_detail"});'
+        'const status_code=j.status_code??j.status_code_v2??0,status_msg=j.status_msg||"";'
+        'const d=j.aweme_detail;if(!d)return JSON.stringify({status_code:status_code,status_msg:status_msg,err:"no aweme_detail"});'
         'const v=d.video||{},m=d.music||{},p=m.play_url||{};'
         'let extra={};try{extra=typeof m.extra==="string"?JSON.parse(m.extra):(m.extra||{})}catch(_){}'
         'const images=Array.isArray(d.images)?d.images:[];'
@@ -339,7 +436,7 @@ def fetch_audio_detail(browser_id, tab_id, aweme_id):
         'offline_desc:m.offline_desc||"",'
         'video_play_urls:((v.play_addr||{}).url_list||[]),'
         'music_play_urls:(p.url_list||[]),'
-        'music_original_urls:extra.original_song_url?[extra.original_song_url]:[]})'
+        'music_original_urls:extra.original_song_url?[extra.original_song_url]:[],status_code:status_code,status_msg:status_msg})'
         '}catch(e){return JSON.stringify({err:String(e)})}})()'
     )
     raw = evaluate(browser_id, tab_id, js, wait=2)
@@ -373,11 +470,56 @@ def fetch_note_images(browser_id, tab_id):
         return []
 
 
+def select_note_images(detail, dom_images):
+    """Use the requested work's detail list as the only image source.
+
+    DOM images may include recommendations and comments. They are allowed to
+    supply a signed original URL only when its stable image ID matches a URL
+    already present in the work detail response.
+    """
+    if not isinstance(detail, dict) or detail.get("err"):
+        return [], ""
+    detail_images = detail.get("imgs")
+    if not isinstance(detail_images, list) or not detail_images:
+        return [], detail.get("desc") or ""
+    noop_map = {}
+    for url in dom_images if isinstance(dom_images, list) else []:
+        if isinstance(url, str) and "~noop" in url:
+            key = _img_key(url)
+            if key:
+                noop_map[key] = url
+    images = []
+    for item in detail_images:
+        urls = item.get("urls") if isinstance(item, dict) else None
+        if not isinstance(urls, list) or not urls:
+            continue
+        url, tier = pick_image(urls, noop_map)
+        images.append((url, tier))
+    return images, detail.get("desc") or ""
+
+
 def get_title(browser_id, tab_id):
     raw = evaluate(browser_id, tab_id, "document.title")
     if not raw:
         return ""
     return re.sub(r"\s*-\s*抖音\s*$", "", str(raw)).strip()
+
+
+def select_browser(browsers, requested=None):
+    """Select only an explicit browser or an unambiguous default environment."""
+    if not browsers:
+        return None
+    if requested:
+        matches = [b for b in browsers if requested in (
+            b.get("displayName"), b.get("browserId"), b.get("id"),
+        )]
+        return matches[0] if len(matches) == 1 else None
+    preferred = [b for b in browsers if b.get("displayName") == "自媒体"]
+    if len(preferred) == 1:
+        return preferred[0]
+    if len(preferred) > 1:
+        return None
+    return browsers[0] if len(browsers) == 1 else None
 
 
 def _codec_rank(url):
@@ -415,14 +557,25 @@ def safe_filename(name, fallback="douyin"):
 def download(url, out_path, referer=REFERER):
     rc, out, err = run(
         ["curl", "-s", "-A", UA_MOBILE, "-e", referer, url, "-o", out_path,
-         "-w", "%{http_code} %{size_download}"]
+         "-w", "%{http_code}\\t%{size_download}\\t%{redirect_url}\\t%{content_type}"]
     )
-    parts = out.strip().split()
-    if len(parts) >= 2 and parts[0] == "200":
+    parts = out.rstrip("\r\n").split("\t")
+    status = parts[0] if parts else "?"
+    redirect_url = parts[2] if len(parts) >= 3 else ""
+    content_type = parts[3].lower() if len(parts) >= 4 else ""
+    if status in ("401", "403", "429") or (status.startswith("3") and is_access_barrier_url(redirect_url)):
+        if os.path.isfile(out_path):
+            os.unlink(out_path)
+        raise AccessBarrierError(f"下载请求返回访问限制 HTTP {status}")
+    if status == "200" and content_type.startswith("text/html"):
+        if os.path.isfile(out_path):
+            os.unlink(out_path)
+        raise AccessBarrierError("下载请求返回验证或登录页面，而不是媒体文件")
+    if len(parts) >= 2 and status == "200":
         size = int(parts[1])
         log(OK, f"下载完成 {size/1024/1024:.2f} MB → {os.path.basename(out_path)}")
         return size > 0
-    log(FAIL, f"下载失败 http={parts[0] if parts else '?'} {err[:200]}")
+    log(FAIL, f"下载失败 http={status} {err[:200]}")
     return False
 
 
@@ -558,28 +711,15 @@ def try_note(browser_id, tab_id, aweme_id, args):
     imgs, title = [], ""
 
     detail = fetch_note_detail(browser_id, tab_id, aweme_id)
-    dom_imgs = fetch_note_images(browser_id, tab_id)
-
-    # DOM 里带签名的 ~noop 原图（按图片 ID 索引）
-    noop_map = {}
-    for u in dom_imgs:
-        if "~noop" in u:
-            k = _img_key(u)
-            if k:
-                noop_map[k] = u
-
-    if detail and not detail.get("err") and detail.get("imgs"):
-        title = detail.get("desc") or ""
-        for item in detail["imgs"]:
-            url, tier = pick_image(item["urls"], noop_map)
-            imgs.append((url, tier))
+    dom_imgs = fetch_note_images(browser_id, tab_id) if (
+        isinstance(detail, dict) and detail.get("imgs")
+    ) else []
+    imgs, title = select_note_images(detail, dom_imgs)
+    if imgs:
         log(INFO, f"detail 接口取到 {len(imgs)} 张正文图")
-    elif dom_imgs:
-        log(WARN, "detail 无 images 字段，退回 DOM 抓取（可能混入推荐位小图）")
-        imgs = [(u, "未知") for u in dom_imgs]
 
     if not imgs:
-        log(FAIL, "没提取到图文大图（页面未加载完，或类型判断有误）")
+        log(FAIL, "作品详情未提供可确认的正文图片清单；为避免保存推荐图，已停止图文下载")
         return []
 
     if not title:
@@ -612,7 +752,7 @@ def main():
     ap = argparse.ArgumentParser(description="抖音视频/图文下载（Easy WebBridge）")
     ap.add_argument("input", help="抖音分享短链 / 长链 / modal_id")
     ap.add_argument("-o", "--out", default=DEFAULT_OUT_DIR, help="输出目录")
-    ap.add_argument("--browser", default="自媒体", help="浏览器显示名（默认：自媒体）")
+    ap.add_argument("--browser", help="目标浏览器显示名或 browserId（默认优先“自媒体”，仅一个环境时可自动选择）")
     ap.add_argument("--quality", default="best", choices=["best", "worst"], help="清晰度")
     ap.add_argument("--audio-only", action="store_true", help="只提取作品音轨，输出 48kHz 双声道 MP3")
     args = ap.parse_args()
@@ -621,11 +761,20 @@ def main():
     browsers = check_bridge()
     if not browsers:
         return 1
-    target = next((b for b in browsers if b.get("displayName") == args.browser), None)
+    target = select_browser(browsers, args.browser)
     if not target:
-        target = browsers[0]
-        log(WARN, f"没找到浏览器「{args.browser}」，改用「{target.get('displayName')}」")
-    browser_id = target["browserId"]
+        if args.browser:
+            log(FAIL, f"找不到在线浏览器「{args.browser}」；不会改用其他浏览器。请确认目标环境在线，或指定其 browserId。")
+        else:
+            names = ", ".join(
+                f"{b.get('displayName')} ({b.get('browserId')})" for b in browsers
+            )
+            log(FAIL, f"在线浏览器无法无歧义选择（{names}）；请用 --browser 指定显示名或 browserId。")
+        return 1
+    browser_id = target.get("browserId") or target.get("id")
+    if not browser_id:
+        log(FAIL, "所选浏览器缺少 browserId，已停止。")
+        return 1
     log(OK, f"浏览器: {target.get('displayName')} ({browser_id})")
 
     # 2. 解析输入（类型只是初判，以打开后的实际页面为准）
@@ -639,14 +788,14 @@ def main():
     if not tab_id:
         return 1
 
-    kind = detect_kind(browser_id, tab_id, aweme_id)
-    log(OK, f"作品 ID: {aweme_id} | 实际类型: {'图文' if kind == 'note' else '视频'}")
-
-    os.makedirs(args.out, exist_ok=True)
     saved = []
     result_detail = {}
+    access_barrier = False
 
     try:
+        kind = detect_kind(browser_id, tab_id, aweme_id)
+        log(OK, f"作品 ID: {aweme_id} | 实际类型: {'图文' if kind == 'note' else '视频'}")
+        os.makedirs(args.out, exist_ok=True)
         if args.audio_only:
             saved, result_detail = try_audio_only(browser_id, tab_id, aweme_id, args)
         else:
@@ -659,10 +808,16 @@ def main():
                 if kind != "note":
                     log(WARN, "视频取流失败，改为按图文提取")
                 saved += try_note(browser_id, tab_id, aweme_id, args)
+    except AccessBarrierError:
+        access_barrier = True
+        log(FAIL, "检测到登录/验证拦截，或无法安全确认详情访问状态；已停止后续请求和回退。请检查当前页面，必要时手动登录/完成验证后重新运行。")
+        log(INFO, f"已保留当前浏览器标签供你处理：tabId={tab_id}")
+        return 2
     finally:
-        # 6. 清理标签组
-        wb(browser_id, "close_session", {"session": session})
-        log(INFO, "已关闭浏览器标签组")
+        if not access_barrier:
+            # 6. 清理标签组
+            wb(browser_id, "close_session", {"session": session})
+            log(INFO, "已关闭浏览器标签组")
 
     if not saved:
         log(FAIL, "没有成功保存任何文件")
