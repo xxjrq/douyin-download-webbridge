@@ -5,6 +5,8 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from contextlib import redirect_stdout
+from io import StringIO
 
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "scripts"))
@@ -37,11 +39,18 @@ class BrowserSelectionTests(unittest.TestCase):
     def test_single_online_browser_is_safe_default(self):
         self.assertEqual(MODULE.select_browser(self.browsers[:1]), self.browsers[0])
 
-    def test_named_default_is_preferred(self):
+    def test_default_does_not_prefer_selfmedia_among_multiple(self):
         browsers = self.browsers + [
             {"displayName": "自媒体", "browserId": "browser-c"}
         ]
-        self.assertEqual(MODULE.select_browser(browsers), browsers[2])
+        self.assertIsNone(MODULE.select_browser(browsers))
+
+    def test_unique_selfmedia_still_requires_selection_when_another_browser_is_online(self):
+        browsers = [
+            {"displayName": "自媒体", "browserId": "browser-a"},
+            {"displayName": "其他环境", "browserId": "browser-b"},
+        ]
+        self.assertIsNone(MODULE.select_browser(browsers))
 
 
 class AccessBarrierTests(unittest.TestCase):
@@ -160,6 +169,30 @@ class AccessBarrierTests(unittest.TestCase):
 
 
 class ExplicitBrowserIntegrationTests(unittest.TestCase):
+    def test_cli_help_requires_selection_for_multiple_online_browsers(self):
+        output = StringIO()
+        with patch.object(sys, "argv", ["douyin_download.py", "--help"]):
+            with redirect_stdout(output), self.assertRaises(SystemExit):
+                MODULE.main()
+        self.assertIn("多个在线时必须指定", output.getvalue())
+
+    def test_default_with_unique_selfmedia_and_other_browser_stops_before_navigation(self):
+        online = [
+            {"displayName": "自媒体", "browserId": "browser-a"},
+            {"displayName": "个人", "browserId": "browser-b"},
+        ]
+        output = StringIO()
+        with patch.object(sys, "argv", ["douyin_download.py", "123456789012"]), \
+                patch.object(MODULE, "check_bridge", return_value=online), \
+                patch.object(MODULE, "parse_input") as parse_input, \
+                patch.object(MODULE, "navigate_to") as navigate, \
+                redirect_stdout(output):
+            self.assertEqual(MODULE.main(), 1)
+        self.assertIn("自媒体 (browser-a)", output.getvalue())
+        self.assertIn("个人 (browser-b)", output.getvalue())
+        parse_input.assert_not_called()
+        navigate.assert_not_called()
+
     def test_missing_explicit_browser_stops_before_input_or_navigation(self):
         with patch.object(sys, "argv", [
             "douyin_download.py", "123456789012", "--browser", "offline-account",

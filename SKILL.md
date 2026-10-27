@@ -49,7 +49,7 @@ python3 scripts/douyin_download.py "<链接>" --audio-only                 # 只
 执行前必须全部通过，任一失败即停止并报告原因：
 
 1. **EasyBR 已启动**：macOS（Apple 芯片）或 Windows 上打开 EasyBR 即可，Easy WebBridge 已内置；脚本直接访问 `127.0.0.1:17777`，读取 `~/.easy-webbridge/bridge-token`，不需要单独安装 CLI 或 Node.js。
-2. **选择目标浏览器**：指定 `--browser` 时只使用匹配的在线显示名或 `browserId`，找不到就停止，不访问其他浏览器。未指定时优先唯一的 `自媒体` 环境；若没有该环境且仅有一个在线浏览器可安全选择，否则列出在线环境并要求明确指定。
+2. **选择目标浏览器**：指定 `--browser` 时只使用匹配的在线显示名或 `browserId`，找不到就停止，不访问其他浏览器。未指定时仅当一个浏览器在线才自动选择；两个或更多浏览器在线时，无论显示名称是什么，都列出名称和 `browserId` 并要求明确指定目标。
 3. 其他操作系统按 README 的源码方式运行 Easy WebBridge。
 
 服务未启动时不要手工拉起其他工具顶替，先按 `easy-webbridge` skill 的方式启动服务。

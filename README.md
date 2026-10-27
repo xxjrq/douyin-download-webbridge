@@ -115,7 +115,7 @@ python3 scripts/douyin_download.py "<链接>" --audio-only
 | --- | --- |
 | 第一个参数 | 抖音分享短链、长链或作品 ID |
 | `-o, --out` | 输出目录，默认 `~/Downloads/DouyinDownloads` |
-| `--browser` | 目标浏览器显示名或 `browserId`；默认优先唯一的 `自媒体` 环境 |
+| `--browser` | 目标浏览器显示名或 `browserId`；只有一个环境在线时可省略 |
 | `--quality best` | 默认模式，选择最高可用清晰度 |
 | `--quality worst` | 选择最小档，仅适合快速预览 |
 | `--audio-only` | 只提取作品音轨并输出 48kHz 双声道 MP3 |
@@ -127,7 +127,7 @@ python3 scripts/douyin_download.py "<链接>" --audio-only
 - 至少一个 Chromium 浏览器在线；抖音出现登录墙时需要在该浏览器登录。
 - `ffmpeg`/`ffprobe` 从 PATH 查找；Apple Silicon macOS 也会检查 `/opt/homebrew/bin`。Windows 请将 FFmpeg 的 `bin` 目录加入 PATH。没有 ffprobe 时仍可下载，但会跳过媒体检查；`--audio-only` 需要 ffmpeg。
 
-脚本先检查 Bridge 和在线浏览器。指定 `--browser` 时只匹配该显示名或 `browserId`，不匹配就停止且不会访问其他环境。未指定时优先选择唯一的“自媒体”；如果没有该环境且在线环境不止一个，会列出候选项并要求你明确选择。只有一个在线环境时才自动使用它。详情接口无法确认访问状态时停止，不继续请求或切换环境。
+脚本先检查 Bridge 和在线浏览器。指定 `--browser` 时只匹配该显示名或 `browserId`，不匹配就停止且不会访问其他环境。未指定时，只有一个浏览器在线才自动使用；两个或更多浏览器在线时，不论是否有“自媒体”环境，都会列出名称和 `browserId` 并要求你明确选择。详情接口无法确认访问状态时停止，不继续请求或切换环境。
 
 ## 文件输出
 

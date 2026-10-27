@@ -506,7 +506,7 @@ def get_title(browser_id, tab_id):
 
 
 def select_browser(browsers, requested=None):
-    """Select only an explicit browser or an unambiguous default environment."""
+    """Require explicit selection when more than one browser is online."""
     if not browsers:
         return None
     if requested:
@@ -514,11 +514,6 @@ def select_browser(browsers, requested=None):
             b.get("displayName"), b.get("browserId"), b.get("id"),
         )]
         return matches[0] if len(matches) == 1 else None
-    preferred = [b for b in browsers if b.get("displayName") == "自媒体"]
-    if len(preferred) == 1:
-        return preferred[0]
-    if len(preferred) > 1:
-        return None
     return browsers[0] if len(browsers) == 1 else None
 
 
@@ -752,7 +747,7 @@ def main():
     ap = argparse.ArgumentParser(description="抖音视频/图文下载（Easy WebBridge）")
     ap.add_argument("input", help="抖音分享短链 / 长链 / modal_id")
     ap.add_argument("-o", "--out", default=DEFAULT_OUT_DIR, help="输出目录")
-    ap.add_argument("--browser", help="目标浏览器显示名或 browserId（默认优先“自媒体”，仅一个环境时可自动选择）")
+    ap.add_argument("--browser", help="目标浏览器显示名或 browserId（仅一个环境在线时可省略；多个在线时必须指定）")
     ap.add_argument("--quality", default="best", choices=["best", "worst"], help="清晰度")
     ap.add_argument("--audio-only", action="store_true", help="只提取作品音轨，输出 48kHz 双声道 MP3")
     args = ap.parse_args()
@@ -769,7 +764,7 @@ def main():
             names = ", ".join(
                 f"{b.get('displayName')} ({b.get('browserId')})" for b in browsers
             )
-            log(FAIL, f"在线浏览器无法无歧义选择（{names}）；请用 --browser 指定显示名或 browserId。")
+            log(FAIL, f"发现多个在线浏览器（{names}）；请先确认目标账号，再用 --browser 指定显示名或 browserId。")
         return 1
     browser_id = target.get("browserId") or target.get("id")
     if not browser_id:

@@ -114,7 +114,7 @@ Options:
 | --- | --- |
 | First argument | Douyin share link, long URL, or work ID |
 | `-o, --out` | Output directory; defaults to `~/Downloads/DouyinDownloads` |
-| `--browser` | Target browser display name or `browserId`; defaults to the unique `自媒体` environment when available |
+| `--browser` | Target browser display name or `browserId`; may be omitted only when one browser is online |
 | `--quality best` | Default mode; choose the highest available quality |
 | `--quality worst` | Choose the smallest variant for a quick preview |
 
@@ -125,7 +125,7 @@ Options:
 - At least one Chromium browser online; sign in to Douyin if the page shows a login wall.
 - `ffmpeg` and `ffprobe` are discovered through `PATH`; Apple Silicon macOS also checks `/opt/homebrew/bin`. On Windows, add FFmpeg's `bin` directory to `PATH`. Downloads still work without ffprobe, but media inspection is skipped; `--audio-only` requires ffmpeg.
 
-The script checks the Bridge and online browsers before opening the work. An explicit `--browser` must match that online display name or `browserId`; it never substitutes another browser. Without an explicit selection, it prefers a unique `自媒体` environment, or selects the only online browser. If multiple online browsers remain, it stops and asks you to choose one.
+The script checks the Bridge and online browsers before opening the work. An explicit `--browser` must match that online display name or `browserId`; it never substitutes another browser. Without an explicit selection, it chooses a browser only when exactly one is online. If two or more are online, it lists their names and `browserId`s and asks you to choose, even when one is named `自媒体`.
 
 ## Output
 
