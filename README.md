@@ -125,9 +125,9 @@ python3 scripts/douyin_download.py "<链接>" --audio-only
 - Python 3.9+、Node.js 20+ 和 `curl`。
 - Easy WebBridge Bridge 正在运行，默认地址为 `127.0.0.1:17777`。
 - 至少一个 Chromium 浏览器在线；抖音出现登录墙时需要在该浏览器登录。
-- macOS 默认使用 `/opt/homebrew/bin/ffprobe` 检查视频；没有 ffprobe 时仍可下载，但不会输出媒体校验信息。
+- `ffmpeg`/`ffprobe` 从 PATH 查找；Apple Silicon macOS 也会检查 `/opt/homebrew/bin`。Windows 请将 FFmpeg 的 `bin` 目录加入 PATH。没有 ffprobe 时仍可下载，但会跳过媒体检查；`--audio-only` 需要 ffmpeg。
 
-脚本会先检查 CLI、Bridge 和在线浏览器。找不到默认名为“自媒体”的浏览器时，会提示并使用第一个在线环境；无法连接时直接停止，不会偷偷打开新的浏览器。
+脚本会先检查 Bridge 和在线浏览器。找不到默认名为“自媒体”的浏览器时，会提示并使用第一个在线环境；无法连接时直接停止，不会偷偷打开新的浏览器。
 
 ## 文件输出
 

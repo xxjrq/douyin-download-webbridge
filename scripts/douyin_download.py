@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -26,8 +27,20 @@ import urllib.request
 
 # ---------- 常量（改这里即可） ----------
 
-FFMPEG_BIN = "/opt/homebrew/bin/ffmpeg"
-FFPROBE_BIN = "/opt/homebrew/bin/ffprobe"
+def find_media_tool(name):
+    """Find ffmpeg/ffprobe through PATH, with the Apple Silicon Homebrew fallback."""
+    found = shutil.which(name)
+    if found:
+        return found
+    if sys.platform == "darwin":
+        homebrew_path = os.path.join("/opt/homebrew/bin", name)
+        if os.path.isfile(homebrew_path):
+            return homebrew_path
+    return None
+
+
+FFMPEG_BIN = find_media_tool("ffmpeg")
+FFPROBE_BIN = find_media_tool("ffprobe")
 BRIDGE_URL = "http://127.0.0.1:17777"
 DEFAULT_OUT_DIR = os.path.expanduser("~/Downloads/DouyinDownloads")
 BRIDGE_TOKEN_FILE = os.path.join(os.path.expanduser("~"), ".easy-webbridge", "bridge-token")
@@ -414,7 +427,7 @@ def download(url, out_path, referer=REFERER):
 
 
 def probe(path):
-    if not os.path.isfile(FFPROBE_BIN):
+    if not FFPROBE_BIN or not os.path.isfile(FFPROBE_BIN):
         return None
     rc, out, _ = run(
         [FFPROBE_BIN, "-v", "error", "-print_format", "json",
@@ -436,7 +449,7 @@ def probe(path):
 
 
 def probe_audio(path):
-    if not os.path.isfile(FFPROBE_BIN):
+    if not FFPROBE_BIN or not os.path.isfile(FFPROBE_BIN):
         return None
     rc, out, _ = run(
         [FFPROBE_BIN, "-v", "error", "-print_format", "json",
@@ -468,8 +481,8 @@ def try_audio_only(browser_id, tab_id, aweme_id, args):
         reason = (detail or {}).get("offline_desc") or (detail or {}).get("err") or "作品详情没有可播放音轨"
         log(FAIL, f"没有提取到作品配乐: {reason}")
         return [], detail or {}
-    if not os.path.isfile(FFMPEG_BIN):
-        log(FAIL, f"找不到 ffmpeg: {FFMPEG_BIN}")
+    if not FFMPEG_BIN or not os.path.isfile(FFMPEG_BIN):
+        log(FAIL, "找不到 ffmpeg，请安装 FFmpeg 并将其加入 PATH")
         return [], detail
 
     stamp = int(time.time() * 1000)

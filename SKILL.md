@@ -90,7 +90,7 @@ python3 scripts/douyin_download.py "<链接>" --audio-only                 # 只
 
 ### 4.3 校验
 
-下载后用 `ffprobe` 输出真实分辨率、编码、时长、体积。**ffprobe 不在 PATH**，固定用 `/opt/homebrew/bin/ffprobe`。
+下载后若系统可找到 `ffprobe`，用它输出真实分辨率、编码、时长、体积。`ffmpeg`/`ffprobe` 从 PATH 查找；Apple Silicon macOS 另兼容 `/opt/homebrew/bin`。Windows 请将 ffmpeg 与 ffprobe 可执行文件所在目录加入 PATH。缺少 ffprobe 时下载仍可完成，但会跳过媒体信息检查；缺少 ffmpeg 时 `--audio-only` 无法转码并会明确失败。
 
 ## 5. 图文（note）下载
 
@@ -152,7 +152,7 @@ const kind = hasImages || d.aweme_type === 68 ? "note" : hasVideo ? "video" : nu
 
 | 坑 | 现象 | 处理 |
 |---|---|---|
-| ffmpeg/ffprobe 不在 PATH | `which ffmpeg` not found | 固定用 `/opt/homebrew/bin/ffmpeg`、`/opt/homebrew/bin/ffprobe` |
+| ffmpeg/ffprobe 找不到 | 工具路径为空 | 安装 FFmpeg 并将其 bin 目录加入 PATH；Apple Silicon macOS 也会检查 `/opt/homebrew/bin` |
 | 直接读 `video.src` | 只拿到 540p | 必须走 detail 接口取 `bit_rate[]` |
 | 只按 `w×h` 选档 | 同分辨率选到 HEVC，剪辑软件兼容性差 | 同分辨率优先 `cs=0`（H.264），见 `_codec_rank` |
 | 用短链路径或首屏 `<video>` 判类型 | 视频元素延迟挂载时被误判成图文 | 优先按 detail 媒体字段判型；不确定时先视频、失败再回退图文 |

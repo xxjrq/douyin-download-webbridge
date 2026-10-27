@@ -1,6 +1,6 @@
 {
   "name": "douyin-download-webbridge",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Free Douyin video and image downloads without a third-party account or API key.",
   "private": false,
   "license": "MIT",

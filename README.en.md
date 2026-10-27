@@ -123,9 +123,9 @@ Options:
 - Python 3.9+, Node.js 20+, and `curl`.
 - Easy WebBridge running at `127.0.0.1:17777` by default.
 - At least one Chromium browser online; sign in to Douyin if the page shows a login wall.
-- On macOS, `/opt/homebrew/bin/ffprobe` is used for video checks. Downloads still work without ffprobe, but media inspection is skipped.
+- `ffmpeg` and `ffprobe` are discovered through `PATH`; Apple Silicon macOS also checks `/opt/homebrew/bin`. On Windows, add FFmpeg's `bin` directory to `PATH`. Downloads still work without ffprobe, but media inspection is skipped; `--audio-only` requires ffmpeg.
 
-The script checks the CLI, Bridge, and online browsers before opening the work. If the browser named `自媒体` is unavailable, it reports the fallback browser it selected. It never silently starts a new browser.
+The script checks the Bridge and online browsers before opening the work. If the browser named `自媒体` is unavailable, it reports the fallback browser it selected. It never silently starts a new browser.
 
 ## Output
 
